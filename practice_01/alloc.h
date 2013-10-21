@@ -2,3 +2,4 @@
 
 extern void *alloc(int n);
 extern void afree(void *p);
+extern void hello(void);
