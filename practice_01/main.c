@@ -8,8 +8,8 @@
 // テスト結果
 typedef struct {
   int status_code;
-  char func_name[256];
-  char msg[256];
+  char func_name[1024];
+  char msg[1024];
 }test_result;
 
 // テスト関数の関数ポインタ
@@ -47,11 +47,10 @@ void check(TEST_FUNC test) {
   switch (result.status_code) {
     case STATUS_FAILED:
       printf("[FAILED]  %s\n", result.func_name);
-      printf("\tmsg: %s\n", result.msg);
+      // printf("\tmsg: %s\n", result.msg);
       break;
     case STATUS_SUCCEEDED:
       printf("[SUCCEEDED] %s\n", result.func_name);
-      printf("\tmsg: %s\n", result.msg);
       break;
     default:
       break;
@@ -65,18 +64,48 @@ test_result ensure_alloc_to_fail_on_overlimit_request(void) {
   test_result result;
   strcpy(result.func_name, __func__);
 
-  result.status_code = STATUS_FAILED;
+  char *allocated = (char *)alloc(ALLOCSIZE+1);
+
+  if (allocated == 0) {
+    result.status_code = STATUS_SUCCEEDED;
+  }
+  else {
+    result.status_code = STATUS_FAILED;
+  }
+
   return result;
 }
 
 /**
- * 制限を超えない範囲でのメモリ割り当ては成功する
+ * 制限を超えない範囲でのメモリ割り当て/開放は成功する
  **/
 test_result ensure_alloc_not_to_fail_on_request_within_the_size_limit(void) {
   test_result result;
   strcpy(result.func_name, __func__);
 
-  result.status_code = STATUS_FAILED;
+  char *a;
+  char *b;
+  int i;
+
+  // 割付
+  a = (char *)alloc(ALLOCSIZE/2);
+  b = (char *)alloc(ALLOCSIZE/2);
+  if (a == 0 || b == 0) {
+    result.status_code = STATUS_FAILED;
+    return result;
+  }
+
+  // 開放
+  afree(a);
+
+  // 割付
+  a = (char *)alloc(ALLOCSIZE/2);
+  if (a == 0) {
+    result.status_code = STATUS_FAILED;
+    return result;
+  }
+
+  result.status_code = STATUS_SUCCEEDED;
   return result;
 }
 
@@ -87,6 +116,26 @@ test_result ensure_alloc_not_to_allocate_duplicated_memory_space(void) {
   test_result result;
   strcpy(result.func_name, __func__);
 
-  result.status_code = STATUS_FAILED;
+  char *a;
+  char *b;
+  int i;
+
+  a = (char *)alloc(3);
+  a[0] = 0;
+  a[1] = 1;
+  a[2] = 2;
+
+  b = (char *)alloc(3);
+  b[0] = 3;
+  b[1] = 4;
+  b[2] = 5;
+  for (i = 0; i < 3; i++) {
+    if (a[i] == i) {
+      result.status_code = STATUS_FAILED;
+      return result;
+    }
+  }
+
+  result.status_code = STATUS_SUCCEEDED;
   return result;
 }

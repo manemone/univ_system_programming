@@ -6,7 +6,8 @@ static char *allocp = allocbuf;  /* Next free position */
 void *alloc(int n)    /* Return pointer to n characters */
 {
   if (allocbuf + ALLOCSIZE - allocp >= n) { /* we have enough space */
-    return allocp + n;
+    allocp += n;
+    return allocp - n;
   } else  /* not enough space */
     return 0;
 }
