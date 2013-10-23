@@ -1,0 +1,145 @@
+#include <stdio.h>
+#include <string.h>
+#include "alloc2.h"
+
+#define STATUS_FAILED -1
+#define STATUS_SUCCEEDED 0
+
+#define PTR_NUM 64
+#define MSG_LENGTH 1024
+#define BUFFER_LENGTH 256
+
+// テスト結果
+typedef struct {
+  int status_code;
+  char func_name[MSG_LENGTH];
+  char msg[MSG_LENGTH];
+}test_result;
+
+// テスト関数の関数ポインタ
+typedef test_result (*TEST_FUNC)(void);
+
+// テスト実行
+void check(TEST_FUNC);
+
+// テスト
+test_result alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit (void);
+test_result alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order (void);
+test_result alloc2_fails_on_overlimit_memory_request (void);
+test_result allocated_memory_spaces_are_not_overlapped (void);
+
+int main(void) {
+  // テスト項目
+  TEST_FUNC tests[] = {
+    alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit,
+    alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order,
+    alloc2_fails_on_overlimit_memory_request,
+    allocated_memory_spaces_are_not_overlapped,
+  };
+  int i;
+
+  // 全てのテストコードを実行
+  for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
+    check(tests[i]);
+  }
+
+  return 0;
+}
+
+/**
+ * テストを実行する
+ **/
+void check(TEST_FUNC test) {
+  test_result result = test();
+
+  switch (result.status_code) {
+    case STATUS_FAILED:
+      printf("\x1b[31m");
+      printf("[FAILED]    %s\n", result.func_name);
+      printf("            %s\n", result.msg);
+      break;
+    case STATUS_SUCCEEDED:
+      printf("\x1b[32m");
+      printf("[SUCCEEDED] %s\n", result.func_name);
+      break;
+    default:
+      printf("\x1b[33m");
+      printf("[UNKNOWN]   %s\n", result.func_name);
+      printf("            %s\n", result.msg);
+      break;
+  }
+  printf("\x1b[39m");
+}
+
+/**
+ * 上限を越えない範囲で割り付け・解放を多数回繰り返しても失敗しない。
+ **/
+test_result alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit (void) {
+  test_result result;
+  strncpy(result.func_name, __func__, MSG_LENGTH);
+  char buffer[BUFFER_LENGTH];
+
+  goto failed;
+
+succeeded:
+  result.status_code = STATUS_SUCCEEDED;
+  return result;
+failed:
+  result.status_code = STATUS_FAILED;
+  return result;
+}
+
+/**
+ * LIFO順でない割り付け・解放を多数回繰り返しても失敗しない。
+ **/
+test_result alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order (void) {
+  test_result result;
+  strncpy(result.func_name, __func__, MSG_LENGTH);
+  char buffer[BUFFER_LENGTH];
+
+  goto failed;
+
+succeeded:
+  result.status_code = STATUS_SUCCEEDED;
+  return result;
+failed:
+  result.status_code = STATUS_FAILED;
+  return result;
+}
+
+/**
+ * 上限を越えた割り付けを行なうと、失敗する。
+ **/
+test_result alloc2_fails_on_overlimit_memory_request (void) {
+  test_result result;
+  strncpy(result.func_name, __func__, MSG_LENGTH);
+  char buffer[BUFFER_LENGTH];
+
+  goto failed;
+
+succeeded:
+  result.status_code = STATUS_SUCCEEDED;
+  return result;
+failed:
+  result.status_code = STATUS_FAILED;
+  return result;
+}
+
+/**
+ * 割り付けを受けて、まだ解放されていない領域は、互いに重なっていない。
+ **/
+test_result allocated_memory_spaces_are_not_overlapped (void) {
+  test_result result;
+  strncpy(result.func_name, __func__, MSG_LENGTH);
+  char buffer[BUFFER_LENGTH];
+
+  goto failed;
+
+succeeded:
+  result.status_code = STATUS_SUCCEEDED;
+  return result;
+failed:
+  result.status_code = STATUS_FAILED;
+  return result;
+}
+
