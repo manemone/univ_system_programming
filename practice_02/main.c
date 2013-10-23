@@ -75,16 +75,41 @@ void check(TEST_FUNC test) {
  * 上限を越えない範囲で割り付け・解放を多数回繰り返しても失敗しない。
  **/
 test_result alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit (void) {
-  test_result result;
+  test_result result = {
+    .status_code = (int)NULL,
+    .msg = "\0",
+  };
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*ALLOCSIZE/(PTR_NUM*2);
+  int i, j;
+
+  // だいたい ALLOCSIZE の半分が埋まるように alloc2
+  for (j = 0; j < 500; j++) {
+    for (i = 0; i < PTR_NUM; i++) {
+      allocated[i] = (char *)alloc2(reqsize);
+      if (allocated[i] == 0) {
+        snprintf(buffer, BUFFER_LENGTH, "memory allocation failed. loop: %d, i = %d, requested size = %d, ALLOCSIZE: %d\n", j, i, reqsize, ALLOCSIZE);
+        strncpy(result.msg, buffer, MSG_LENGTH-strlen(result.msg));
+        goto failed;
+      }
+    }
+
+    // afree2
+    for (i = PTR_NUM-1; i >= 0; i--) {
+      afree2(allocated[i]);
+    }
+  }
 
 succeeded:
   result.status_code = STATUS_SUCCEEDED;
   return result;
 failed:
+  for (--i; i >= 0; i--) {
+    afree2(allocated[i]);
+  }
   result.status_code = STATUS_FAILED;
   return result;
 }
@@ -93,7 +118,10 @@ failed:
  * LIFO順でない割り付け・解放を多数回繰り返しても失敗しない。
  **/
 test_result alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order (void) {
-  test_result result;
+  test_result result = {
+    .status_code = (int)NULL,
+    .msg = "\0",
+  };
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
@@ -111,7 +139,10 @@ failed:
  * 上限を越えた割り付けを行なうと、失敗する。
  **/
 test_result alloc2_fails_on_overlimit_memory_request (void) {
-  test_result result;
+  test_result result = {
+    .status_code = (int)NULL,
+    .msg = "\0",
+  };
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
@@ -129,7 +160,10 @@ failed:
  * 割り付けを受けて、まだ解放されていない領域は、互いに重なっていない。
  **/
 test_result allocated_memory_spaces_are_not_overlapped (void) {
-  test_result result;
+  test_result result = {
+    .status_code = (int)NULL,
+    .msg = "\0",
+  };
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 

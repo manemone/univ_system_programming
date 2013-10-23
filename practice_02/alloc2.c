@@ -57,9 +57,8 @@ void afree2(void *ap) /* Free space pointed to by p */
     p->s.ptr = q->s.ptr;
   }
   if (q + q->s.size == p) {  /* Merge to downward */
-
-    /* FILL HERE */
-
+    q->s.size += p->s.size;
+    q->s.ptr = p->s.ptr;
   } else {
     q->s.ptr = p;
   }
