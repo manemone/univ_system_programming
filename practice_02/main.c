@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 #include "alloc2.h"
 
 #define STATUS_FAILED -1
@@ -33,8 +35,8 @@ int main(void) {
   TEST_FUNC tests[] = {
     alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit,
     alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order,
-    alloc2_fails_on_overlimit_memory_request,
-    allocated_memory_spaces_are_not_overlapped,
+    // alloc2_fails_on_overlimit_memory_request,
+    // allocated_memory_spaces_are_not_overlapped,
   };
   int i;
 
@@ -51,6 +53,9 @@ int main(void) {
  **/
 void check(TEST_FUNC test) {
   test_result result = test();
+
+  // テスト中で使用する乱数発生器にシードを設定
+  srand((unsigned int)time(NULL));
 
   switch (result.status_code) {
     case STATUS_FAILED:
@@ -125,7 +130,45 @@ test_result alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*ALLOCSIZE/(PTR_NUM*2);
+  int i, j, allocated_index;
+
+  for (j = 0; j < 500; j++) {
+    // だいたい ALLOCSIZE の半分が埋まるように alloc2
+    for (i = 0; i < PTR_NUM; i++) {
+      allocated[i] = (char *)alloc2(reqsize);
+      if (allocated[i] == 0) {
+        snprintf(buffer, BUFFER_LENGTH, "memory allocation failed. loop: %d, i = %d, requested size = %d, ALLOCSIZE: %d\n", j, i, reqsize, ALLOCSIZE);
+        strncpy(result.msg, buffer, MSG_LENGTH-strlen(result.msg));
+        goto failed;
+      }
+    }
+
+    // ランダムに開放
+    for (allocated_index = rand()%PTR_NUM, i = 0; i < PTR_NUM; i++) {
+      while (allocated[allocated_index] == 0) {
+        allocated_index = rand()%PTR_NUM;
+      }
+      afree2(allocated[allocated_index]);
+      allocated[allocated_index] = 0;
+    }
+
+    // もう一度割付
+    for (i = 0; i < PTR_NUM; i++) {
+      allocated[i] = (char *)alloc2(reqsize);
+      if (allocated[i] == 0) {
+        snprintf(buffer, BUFFER_LENGTH, "memory allocation failed. loop: %d, i = %d, requested size = %d, ALLOCSIZE: %d\n", j, i, reqsize, ALLOCSIZE);
+        strncpy(result.msg, buffer, MSG_LENGTH-strlen(result.msg));
+        goto failed;
+      }
+    }
+
+    // 割付とおなじ順で開放
+    for (i = 0; i < PTR_NUM; i++) {
+      afree2(allocated[i]);
+    }
+  }
 
 succeeded:
   result.status_code = STATUS_SUCCEEDED;
