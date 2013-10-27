@@ -35,7 +35,7 @@ int main(void) {
   TEST_FUNC tests[] = {
     alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit,
     alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order,
-    // alloc2_fails_on_overlimit_memory_request,
+    alloc2_fails_on_overlimit_memory_request,
     // allocated_memory_spaces_are_not_overlapped,
   };
   int i;
@@ -189,8 +189,8 @@ test_result alloc2_fails_on_overlimit_memory_request (void) {
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
-  goto failed;
-
+  if (alloc2(ALLOCSIZE+1) != 0) goto failed;
+  
 succeeded:
   result.status_code = STATUS_SUCCEEDED;
   return result;
