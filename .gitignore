@@ -64,4 +64,5 @@ Session.vim
 *.out
 *.app
 
-
+*.dSYM
+*.gch
