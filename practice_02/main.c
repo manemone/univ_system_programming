@@ -36,7 +36,7 @@ int main(void) {
     alloc2_and_afree2_can_handle_multiple_requests_within_the_size_limit,
     alloc2_and_afree2_can_handle_multiple_requests_which_are_not_in_lifo_order,
     alloc2_fails_on_overlimit_memory_request,
-    // allocated_memory_spaces_are_not_overlapped,
+    allocated_memory_spaces_are_not_overlapped,
   };
   int i;
 
@@ -174,6 +174,9 @@ succeeded:
   result.status_code = STATUS_SUCCEEDED;
   return result;
 failed:
+  for (--i; i >= 0; i--) {
+    afree2(allocated[i]);
+  }
   result.status_code = STATUS_FAILED;
   return result;
 }
@@ -210,7 +213,42 @@ test_result allocated_memory_spaces_are_not_overlapped (void) {
   strncpy(result.func_name, __func__, MSG_LENGTH);
   char buffer[BUFFER_LENGTH];
 
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*ALLOCSIZE/(PTR_NUM*2);
+  int i, j, allocated_index;
+
+  // だいたい ALLOCSIZE の半分が埋まるように alloc2
+  for (i = 0; i < PTR_NUM; i++) {
+    allocated[i] = (char *)alloc2(reqsize);
+    if (allocated[i] == 0) {
+      snprintf(buffer, BUFFER_LENGTH, "memory allocation failed. loop: %d, i = %d, requested size = %d, ALLOCSIZE: %d\n", j, i, reqsize, ALLOCSIZE);
+      strncpy(result.msg, buffer, MSG_LENGTH-strlen(result.msg));
+      goto failed;
+    }
+  }
+
+  // fill the each allocated memory spaces with its index number
+  for (i = 0; i < PTR_NUM; i++) {
+    for (j = 0; j < reqsize; j++) {
+      allocated[i][j] = (char)i;
+    }
+  }
+
+  // check all numbers in the allocated memory spaces
+  for (i = 0; i < PTR_NUM; i++) {
+    for (j = 0; j < reqsize; j++) {
+      if (allocated[i][j] != (char)i){
+        snprintf(buffer, BUFFER_LENGTH, "overlapping check failed. expected: %d, found %d. i = %d, j: %d\n", i, allocated[i][j], i, j);
+        strncpy(result.msg, buffer, MSG_LENGTH-strlen(result.msg));
+        goto failed;
+      }
+    }
+  }
+
+  // 割付とおなじ順で開放
+  for (i = 0; i < PTR_NUM; i++) {
+    afree2(allocated[i]);
+  }
 
 succeeded:
   result.status_code = STATUS_SUCCEEDED;
