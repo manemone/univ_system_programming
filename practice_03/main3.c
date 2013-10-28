@@ -126,12 +126,51 @@ void put_msg(TEST_CASE *kase, char *format, ...) {
  * LIFO順でない割り付け・解放を多数回繰り返しても失敗しない。
  **/
 void alloc3_and_afree3_can_handle_multiple_requests_which_are_not_in_lifo_order (TEST_CASE* kase) {
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*(ALLOC_UNIT*2)/(PTR_NUM);
+  int i, j, allocated_index;
+
+  for (j = 0; j < 500; j++) {
+    for (i = 0; i < PTR_NUM; i++) {
+      // ALLOC_UNIT の 2 倍程度のメモリ領域をリクエスト
+      allocated[i] = (char *)alloc3(reqsize);
+      if (allocated[i] == 0) {
+        kase->put_msg(kase, "memory allocation failed. loop: %d, i = %d, requested size = %d\n", j, i, reqsize);
+        goto failed;
+      }
+    }
+
+    // ランダムに開放
+    for (allocated_index = rand()%PTR_NUM, i = 0; i < PTR_NUM; i++) {
+      while (allocated[allocated_index] == 0) {
+        allocated_index = rand()%PTR_NUM;
+      }
+      afree3(allocated[allocated_index]);
+      allocated[allocated_index] = 0;
+    }
+
+    // もう一度割付
+    for (i = 0; i < PTR_NUM; i++) {
+      allocated[i] = (char *)alloc3(reqsize);
+      if (allocated[i] == 0) {
+        kase->put_msg(kase, "memory allocation failed. loop: %d, i = %d, requested size = %d\n", j, i, reqsize);
+        goto failed;
+      }
+    }
+
+    // 割付とおなじ順で開放
+    for (i = 0; i < PTR_NUM; i++) {
+      afree3(allocated[i]);
+    }
+  }
 
 succeeded:
   kase->status_code = STATUS_SUCCEEDED;
   return;
 failed:
+  for (--i; i >= 0; i--) {
+    afree3(allocated[i]);
+  }
   kase->status_code = STATUS_FAILED;
   return;
 }

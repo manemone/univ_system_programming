@@ -19,10 +19,23 @@ static HEADER allocbuf  /* Dummy header */
 
 static HEADER *allocp = &allocbuf;	/* Last block allocated */
 
+static void *morecore(int nbytes, int *realbytes)
+{
+  void *cp;
+  *realbytes = (nbytes + ALLOC_UNIT - 1) / ALLOC_UNIT * ALLOC_UNIT;
+
+  cp = mmap(NULL, *realbytes, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, 0, 0);
+  if (cp == (void *)-1) {
+    return NULL;
+  }
+  return cp;
+}
+
 void *alloc3(int nbytes)    /* Return pointer to nbytes block */
 {
   HEADER *p, *q;
   int nunits = 1 + (nbytes + sizeof(HEADER) - 1) / sizeof(HEADER);
+  int real_bytes;
 
   for (q = allocp, p = q->s.ptr; ; q =p, p = p->s.ptr) {
     if (p->s.size >= nunits) {
@@ -37,7 +50,10 @@ void *alloc3(int nbytes)    /* Return pointer to nbytes block */
       return (void *)(p + 1);
     }
     if (p == allocp) {
-      return 0;
+      p = (HEADER *)morecore(nbytes, &real_bytes);
+      p->s.size = real_bytes/sizeof(HEADER);
+      afree3((void *)(p+1));
+      return alloc3(nbytes);
     }
   }
 }
@@ -64,17 +80,5 @@ void afree3(void *ap) /* Free space pointed to by p */
     q->s.ptr = p;
   }
   allocp = q;
-}
-
-static void *morecore(int nbytes, int *realbytes)
-{
-  void *cp;
-  *realbytes = (nbytes + ALLOC_UNIT - 1) / ALLOC_UNIT * ALLOC_UNIT;
-
-  cp = mmap(NULL, *realbytes, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, 0, 0);
-  if (cp == (void *)-1) {
-    return NULL;
-  }
-  return cp;
 }
 
