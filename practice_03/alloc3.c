@@ -51,6 +51,7 @@ void *alloc3(int nbytes)    /* Return pointer to nbytes block */
     }
     if (p == allocp) {
       p = (HEADER *)morecore(nbytes, &real_bytes);
+      if (p == NULL) return 0;
       p->s.size = real_bytes/sizeof(HEADER);
       afree3((void *)(p+1));
       return alloc3(nbytes);

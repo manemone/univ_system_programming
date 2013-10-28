@@ -114,7 +114,6 @@ void put_msg(TEST_CASE *kase, char *format, ...) {
   va_list args;
   char *buffer[MSG_LENGTH];
 
-  printf("put_msg() called.\n");
   va_start(args, format);
   vsnprintf((char *)buffer, BUFFER_LENGTH, format, args);
   va_end(args);
@@ -179,7 +178,25 @@ failed:
  * 合計で数 MB 程度の領域を割りつけてもエラーにならない。
  **/
 void alloc3_and_afree3_can_handle_at_least_few_mb_memory_spaces_in_total (TEST_CASE* kase) {
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*(5*1024*1024)/(PTR_NUM);
+  int i, j;
+
+  for (j = 0; j < 500; j++) {
+    for (i = 0; i < PTR_NUM; i++) {
+      // 合計で 5 MB 程度の領域を要求
+      allocated[i] = (char *)alloc3(reqsize);
+      if (allocated[i] == 0) {
+        kase->put_msg(kase, "memory allocation failed. loop: %d, i = %d, requested size = %d\n", j, i, reqsize);
+        goto failed;
+      }
+    }
+
+    // 割付とおなじ順で開放
+    for (i = 0; i < PTR_NUM; i++) {
+      afree3(allocated[i]);
+    }
+  }
 
 succeeded:
   kase->status_code = STATUS_SUCCEEDED;
