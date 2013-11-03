@@ -251,12 +251,47 @@ failed:
  * 割り付けを受けて、まだ解放されていない領域は、互いに重なっていない。
  **/
 void allocated_memory_spaces_are_not_overlapped (TEST_CASE* kase) {
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*(ALLOC_UNIT*2)/(PTR_NUM);
+  int i, j;
+
+  for (i = 0; i < PTR_NUM; i++) {
+    // ALLOC_UNIT の 2 倍程度のメモリ領域をリクエスト
+    allocated[i] = (char *)alloc3(reqsize);
+    if (allocated[i] == 0) {
+      kase->put_msg(kase, "memory allocation failed. loop: %d, i = %d, requested size = %d\n", j, i, reqsize);
+    }
+  }
+
+  // fill the each allocated memory spaces with its index number
+  for (i = 0; i < PTR_NUM; i++) {
+    for (j = 0; j < reqsize; j++) {
+      allocated[i][j] = (char)i;
+    }
+  }
+
+  // check all numbers in the allocated memory spaces
+  for (i = 0; i < PTR_NUM; i++) {
+    for (j = 0; j < reqsize; j++) {
+      if (allocated[i][j] != (char)i){
+        kase->put_msg(kase, "overlapping check failed. expected: %d, found %d. i = %d, j: %d\n", i, allocated[i][j], i, j);
+        goto failed;
+      }
+    }
+  }
+
+  // 割付とおなじ順で開放
+  for (i = 0; i < PTR_NUM; i++) {
+    afree3(allocated[i]);
+  }
 
 succeeded:
   kase->status_code = STATUS_SUCCEEDED;
   return;
 failed:
+  for (i = 0; i < PTR_NUM; i++) {
+    afree3(allocated[i]);
+  }
   kase->status_code = STATUS_FAILED;
   return;
 }
