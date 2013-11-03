@@ -210,12 +210,39 @@ failed:
  * 割りつけた領域全体に書き込んでもエラーにならない。
  **/
 void all_of_allocated_memory_spaces_are_writable_without_any_errors (TEST_CASE* kase) {
-  goto failed;
+  char *allocated[PTR_NUM];
+  int reqsize = sizeof(char)*(ALLOC_UNIT*2)/(PTR_NUM);
+  int i, j;
+
+  for (i = 0; i < PTR_NUM; i++) {
+    // ALLOC_UNIT の 2 倍程度のメモリ領域をリクエスト
+    allocated[i] = (char *)alloc3(reqsize);
+    if (allocated[i] == 0) {
+      kase->put_msg(kase, "memory allocation failed. loop: %d, i = %d, requested size = %d\n", j, i, reqsize);
+      goto failed;
+    }
+  }
+
+  // すべての領域に書き込み
+  for (i = 0; i < PTR_NUM; i++) {
+    for (j = 0; j < reqsize; j++) {
+      // SIGSEGV が発生するとプログラムは止まる
+      allocated[i][j] = i;
+    }
+  }
+
+  // 割付とおなじ順で開放
+  for (i = 0; i < PTR_NUM; i++) {
+    afree3(allocated[i]);
+  }
 
 succeeded:
   kase->status_code = STATUS_SUCCEEDED;
   return;
 failed:
+  for (--i; i >= 0; i--) {
+    afree3(allocated[i]);
+  }
   kase->status_code = STATUS_FAILED;
   return;
 }
