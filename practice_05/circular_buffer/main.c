@@ -4,8 +4,11 @@
 
 #define QSIZE 8 /* キューの長さ */
 
+// エンキューのスレッド数とスレッド内でのエンキュー数
 #define ENQUEUE_UNIT 3
 #define ENQUEUEROR_NUM 5
+
+// デキューのスレッド数とスレッド内でのデキュー数
 #define DEQUEUE_UNIT 5 
 #define DEQUEUEROR_NUM 3
 
@@ -65,6 +68,7 @@ void *get_cb_data(circ_buf_t *cbp) {
   return (data);
 }
 
+/* エンキューのスレッド */
 void enqueue (void *_no) {
   int no = (int)_no;
   int i;
@@ -74,6 +78,7 @@ void enqueue (void *_no) {
   }
 }
 
+/* デキューのスレッド */
 void dequeue (void *_no) {
   int no = (int)_no;
   int i;
