@@ -1,0 +1,22 @@
+## クライアントの接続手順
+```c
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+int sock_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP); // ソケットの作成
+struct sockaddr a; // サーバのアドレス
+
+// サーバのアドレスを設定
+a.sin_family = AF_INET;
+a.sin_port = htons(/* ポート番号 */);
+a.sin_addr.s_addr = htonl(/* IP アドレス 32 ビット*/);
+
+if (connect(sock_fd, &a, sizeof(a)) < 0) {
+  // エラー
+}
+else {
+  // 接続成功
+  sock
+}
+```
