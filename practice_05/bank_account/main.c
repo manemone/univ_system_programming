@@ -34,8 +34,6 @@ int main (void) {
 void save (void *_no) {
   int no = (int)_no;
   int value = 500;
-
-  printf("+ %d, saver %d\n", value, no);
   deposit(value);
 }
 
@@ -45,12 +43,5 @@ void save (void *_no) {
 void waste (void *_no) {
   int no = (int)_no;
   int value = 510;
-  int succeeded;
-
-  printf("- %d, waster %d\n", value, no);
-  succeeded = withdraw(value);
-
-  if (succeeded == 0) {
-    printf("! no enough cash!: waster %d\n", no);
-  }
+  withdraw(value);
 }

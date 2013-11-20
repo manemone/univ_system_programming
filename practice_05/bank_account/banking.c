@@ -13,6 +13,7 @@ pthread_mutex_t mutex_balance = PTHREAD_MUTEX_INITIALIZER;
  **/
 void deposit (int n) {
   pthread_mutex_lock(&mutex_balance);
+  printf("+ %d\n", n);
   balance += n;
   pthread_mutex_unlock(&mutex_balance);
 }
@@ -27,9 +28,11 @@ int withdraw (int n) {
 
   pthread_mutex_lock(&mutex_balance);
   if (balance-n < 0) {
+    printf("! WITHDRAW FAILED. no enough cash.\n");
     ret = 0;
   }
   else {
+    printf("- %d\n", n);
     balance -= n;
     ret = 1;
   }
