@@ -1,0 +1,439 @@
+システムプログラミング特論
+演習5 レポート
+201220688 濱田一喜
+
+演習問題1
+mutexを利用して，銀行口座に関する入金，引き出し， 残高確認のライブラリを作成し，動作の確認を行う。
+
+プログラム
+プログラムの構成
+  * banking.h: 銀行口座の入出金／残高確認ライブラリのヘッダ
+  * banking.c: 銀行口座の入出金／残高確認ライブラリ本体
+  * main.c: 動作確認プログラム
+　預金額が正しいことを確かめるための標準出力への文字列書き込み処理は、ライブラリの中に含まれている。ライブラリには本来このような処理を含めるべきではないが、共有資源への変更が行われる直前の画面への情報出力を確実にするためにこのような記述を行った。
+
+ソースリスト
+/* banking.h */
+#ifndef BANKING_H
+#define BANKING_H
+
+extern void deposit (int);
+extern int withdraw (int);
+extern int get_balance (void);
+
+#endif
+
+
+/* banking.c */
+#include <pthread.h>
+#include "banking.h"
+
+// 口座残高
+static int balance = 0;
+
+// 残高の mutex
+pthread_mutex_t mutex_balance = PTHREAD_MUTEX_INITIALIZER;
+
+/**
+ * 口座へ入金する。
+ * 処理が成功すると 1 を返す。
+ **/
+void deposit (int n) {
+  pthread_mutex_lock(&mutex_balance);
+  printf("+ %d\n", n);
+  balance += n;
+  pthread_mutex_unlock(&mutex_balance);
+}
+
+/**
+ * 預金を引き出す。
+ * 引き出し処理が成功すると 1 を返す。
+ * 残高不足により処理が行えなければ 0 を返す。
+ **/
+int withdraw (int n) {
+  int ret;
+
+  pthread_mutex_lock(&mutex_balance);
+  if (balance-n < 0) {
+    printf("! WITHDRAW FAILED. no enough cash.\n");
+    ret = 0;
+  }
+  else {
+    printf("- %d\n", n);
+    balance -= n;
+    ret = 1;
+  }
+  pthread_mutex_unlock(&mutex_balance);
+
+  return ret;
+}
+
+/**
+ * 残高を返す。
+ **/
+int get_balance (void) {
+  int ret;
+
+  pthread_mutex_lock(&mutex_balance);
+  ret = balance; 
+  pthread_mutex_unlock(&mutex_balance);
+
+  return ret;
+}
+
+
+/* main.c */
+#include <stdio.h>
+#include <pthread.h>
+#include "banking.h"
+
+#define OPERATOR_NUM 3
+
+void save (void*);
+void waste (void*);
+
+int main (void) {
+  pthread_t savers[OPERATOR_NUM];
+  pthread_t wasters[OPERATOR_NUM];
+  int i;
+
+  for (i = 0; i < OPERATOR_NUM; i++) {
+    pthread_create(&savers[i], NULL, (void *)save, (void *)i);
+    pthread_create(&wasters[i], NULL, (void *)waste, (void *)i);
+  }
+
+  for (i = 0; i < OPERATOR_NUM; i++) {
+    pthread_join(savers[i], NULL);
+    pthread_join(wasters[i], NULL);
+  }
+
+  printf("----\n");
+  printf("$ %d lasted.\n", get_balance());
+
+  return 0;
+}
+
+/**
+ * お金を貯める
+ **/
+void save (void *_no) {
+  int no = (int)_no;
+  int value = 500;
+  deposit(value);
+}
+
+/**
+ * お金を使う
+ **/
+void waste (void *_no) {
+  int no = (int)_no;
+  int value = 510;
+  withdraw(value);
+}
+
+
+実行結果
+$ ./a.out 
++ 500
+! WITHDRAW FAILED. no enough cash.
++ 500
+- 510
++ 500
+- 510
+----
+$ 480 lasted.
+
+$ ./a.out 
++ 500
+! WITHDRAW FAILED. no enough cash.
++ 500
+- 510
+! WITHDRAW FAILED. no enough cash.
++ 500
+----
+$ 990 lasted.
+
+$ ./a.out 
++ 500
+! WITHDRAW FAILED. no enough cash.
+! WITHDRAW FAILED. no enough cash.
++ 500
++ 500
+- 510
+----
+$ 990 lasted.
+
+
+考察
+プログラムを実行するたびにスレッドの実行順序が入れ替わり、入出金の順序も異なることがわかる。
+いずれの場合にも、出金処理の際に残高不足であることがわかると処理は正しく失敗し、不当な入出金操作は行われていない。最終的な残高は入出金の合計と一致している。
+
+
+演習課題2
+スレッド版巡回バッファを複数スレッドで利用し， 動作の確認を行う。
+
+プログラム
+プログラムの構成
+  * main.c: スレッド番巡回バッファ／動作確認プログラム
+
+　共有バッファへの書き込み／書き出し関数は配布資料で提示されたものを用いた。ただし、状態出力の処理を関数内に追加した。状態が出力されるのは、以下の場合である。
+  * 条件変数のシグナルの待機に入る直前
+  * エンキュー／デキューが成功した直後
+  * バッファが FULL/EMPTY になったとき
+
+　キューの長さは 8 とし、3エントリを追加するスレッドを5つ、5エントリを取り出すスレッドを3つ用意した。
+
+ソースリスト
+/* main.c */
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+#define QSIZE 8 /* キューの長さ */
+
+// エンキューのスレッド数とスレッド内でのエンキュー数
+#define ENQUEUE_UNIT 3
+#define ENQUEUEROR_NUM 5
+
+// デキューのスレッド数とスレッド内でのデキュー数
+#define DEQUEUE_UNIT 5 
+#define DEQUEUEROR_NUM 3
+
+typedef struct {
+  pthread_mutex_t buf_lock; /* 構造体のロック */
+  int start;                /* バッファの開始 */
+  int num_full;             /* データの数 */
+  pthread_cond_t notfull;   /* notfullの条件変数 */
+  pthread_cond_t notempty;  /* notemptyの条件変数 */
+  void *data[QSIZE];        /* 巡回バッファ */
+} circ_buf_t;
+
+circ_buf_t *buffer;
+
+void put_cb_data(circ_buf_t *cbp, void *data) {
+  pthread_mutex_lock(&cbp->buf_lock);
+  /* wait while the buffer is full */
+  while (cbp->num_full == QSIZE) {
+    printf("WAITING FOR DEQUEUEING...\n");
+    pthread_cond_wait(&cbp->notfull, &cbp->buf_lock);
+  }
+  cbp->data[(cbp->start + cbp->num_full) % QSIZE] = data;
+  cbp->num_full++;
+  
+  /* DEBUG */
+  printf("+\n");
+  if (cbp->num_full == QSIZE) {
+    printf("FULL.\n\n");
+  }
+
+  /* let a waiting reader know there’s data */
+  pthread_cond_signal(&cbp->notempty);
+  pthread_mutex_unlock(&cbp->buf_lock);
+}
+
+void *get_cb_data(circ_buf_t *cbp) {
+  void *data;
+  pthread_mutex_lock(&cbp->buf_lock);
+  /* wait while there’s nothing in the buffer */
+  while (cbp->num_full == 0) {
+    printf("WAITING FOR ENQUEUEING...\n");
+    pthread_cond_wait(&cbp->notempty, &cbp->buf_lock);
+  }
+  data = cbp->data[cbp->start];
+  cbp->start = (cbp->start + 1) % QSIZE;
+  cbp->num_full--;
+  
+  /* DEBUG */
+  printf("-\n");
+  if (cbp->num_full == 0) {
+    printf("EMPTY.\n\n");
+  }
+
+  /* let a waiting writer know there’s room */
+  pthread_cond_signal(&cbp->notfull);
+  pthread_mutex_unlock(&cbp->buf_lock);
+  return (data);
+}
+
+/* エンキューのスレッド */
+void enqueue (void *_no) {
+  int no = (int)_no;
+  int i;
+
+  for (i = 0; i < ENQUEUE_UNIT; i++) {
+    put_cb_data(buffer, (void *)no);
+  }
+}
+
+/* デキューのスレッド */
+void dequeue (void *_no) {
+  int no = (int)_no;
+  int i;
+
+  for (i = 0; i < DEQUEUE_UNIT; i++) {
+    get_cb_data(buffer);
+  }
+}
+
+int main (void) {
+  pthread_t enquerors[ENQUEUEROR_NUM];
+  pthread_t dequerors[DEQUEUEROR_NUM];
+  int i;
+
+  // initializing circular buffer
+  buffer = (circ_buf_t *)malloc(sizeof(circ_buf_t));
+  pthread_mutex_init(&buffer->buf_lock, NULL);
+  buffer->start = 0;
+  buffer->num_full = 0;
+  pthread_cond_init(&buffer->notfull, NULL);
+  pthread_cond_init(&buffer->notempty, NULL);
+
+  for (i = 0; i < ENQUEUEROR_NUM; i++) {
+    pthread_create(&enquerors[i], NULL, (void *)enqueue, (void *)i);
+  }
+  for (i = 0; i < DEQUEUEROR_NUM; i++) {
+    pthread_create(&dequerors[i], NULL, (void *)dequeue, (void *)i);
+  }
+
+  for (i = 0; i < ENQUEUEROR_NUM; i++) {
+    pthread_join(enquerors[i], NULL);
+  }
+  for (i = 0; i < DEQUEUEROR_NUM; i++) {
+    pthread_join(dequerors[i], NULL);
+  }
+}
+
+
+実行結果
+$ ./a.out 
++
++
++
++
++
+-
++
++
++
++
+FULL.
+
+WAITING FOR DEQUEUEING...
+-
++
+FULL.
+
+-
++
+FULL.
+
+-
++
+FULL.
+
+WAITING FOR DEQUEUEING...
+-
++
+FULL.
+
+-
+-
+-
++
++
+-
+-
+-
+-
+-
+-
+-
+EMPTY.
+
+$ ./a.out 
++
++
++
++
++
+-
+-
+-
++
++
++
++
++
+-
+-
+-
++
++
++
++
+FULL.
+
+WAITING FOR DEQUEUEING...
+-
+-
+-
+-
++
+-
+-
+-
+-
+-
+EMPTY.
+
+$ ./a.out 
++
++
++
++
++
++
++
++
+FULL.
+
+WAITING FOR DEQUEUEING...
+WAITING FOR DEQUEUEING...
+-
+-
+-
++
+-
++
+-
++
+-
++
+-
++
+-
++
+-
+-
+-
++
+-
+-
+-
+-
+EMPTY.
+
+
+考察
+プログラムを実行するたびにスレッドの実行順序が入れ替わり、エンキュー／デキューの順序も異なることがわかる。
+巡回バッファが FULL のときにエンキューしようとしたスレッドはデキューを待たされ、バッファに空きができた後にエンキューを行っている。
+このとき、複数のスレッドが同時に待ち状態に入っても問題ない。
+すべての処理は EMPTY の表示を最後に終了する。エンキューを示す + の出力とデキューを示す - の出力の数は一致している。
+エンキュー／デキューされる総エントリ数は同数に設定されていることから、正しく動作していることが分かる。
+
+
+講義の感想
+pthread での排他制御／スレッド処理を学べたのは興味深い。
+セマフォについても触れてもらえるとさらに良いと感じた。
+Detached スレッドを使用する具体的な場面が想像しにくかったので、例を挙げて頂ければ理解の助けになる。
+スレッドセーフの概念／mutex の再ロックの概念についてあまり触れられていなかったが、課題でつまづくので補足資料として紹介があると良いと思う。
