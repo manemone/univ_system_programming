@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <pthread.h>
 
 #include "logutil.h"
 
@@ -16,6 +17,8 @@
 #else
 #define LISTEN_BACKLOG 5
 #endif
+
+#define CLIENT_MAX_NUM 2
 
 char *program_name = "sp6-server";
 
@@ -56,20 +59,42 @@ usage(void)
 }
 
 void
+respond (void *_sock) {
+  char c;
+  FILE *fp;
+  int sock = (int)_sock;
+
+  send(sock, "HELLO. what you type will be echo back to you.\n", 47, 0);
+
+  fp = fdopen(sock, "rb");
+  while ((c = getc(fp)) != EOF) {
+    send(sock, &c, 1, 0);
+    fprintf(stderr, "%c", c);
+  }
+
+  send(sock, "Bye!\n", 5, 0);
+  close(sock);
+  fprintf(stderr, "closed socket [%d].\n", sock);
+}
+
+void
 main_loop (int sock) {
   struct sockaddr_in client_addr;
   int length;
   int client_sock;
+  pthread_t responder;
+  int i, j, cnt;
 
-  while (1) {
+  for (cnt = 0;;cnt++) {
     length = sizeof(client_addr);
     client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
+    fprintf(stderr, "opened socket [%d].\n", client_sock);
+
     printf("accepted connection from %s, port=%d\n",
         inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-    send(client_sock, "HELLO", 5, 0);
-
-    close(client_sock);
+    pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
+    pthread_detach(responder);
   }
 }
 
