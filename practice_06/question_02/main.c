@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
+#include <poll.h>
 
 #include "logutil.h"
 
@@ -18,6 +19,11 @@
 #else
 #define LISTEN_BACKLOG 5
 #endif
+
+// シグナルハンドリングに使用される変数
+sigset_t signal_set;
+int to_die = 0;
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
 
 char *program_name = "sp6-server";
 
@@ -81,32 +87,60 @@ main_loop (int sock) {
   struct sockaddr_in client_addr;
   int length;
   int client_sock;
+  int client_ready;
   pthread_t responder;
-  int i, j, cnt;
+  struct pollfd pfd;
+  int i, j;
 
-  for (cnt = 0;;cnt++) {
-    length = sizeof(client_addr);
-    client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
-    fprintf(stderr, "opened socket [%d].\n", client_sock);
+  length = sizeof(client_addr);
+  pfd.fd = sock;
+  pfd.events = POLLIN;
+  while (1) {
+    // クライアントからの接続をポーリングして待つ
+    client_ready = poll(&pfd, 1, 1000);
+    if (client_ready > 0) {
+      client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
+      fprintf(stderr, "opened socket [%d].\n", client_sock);
 
-    printf("accepted connection from %s, port=%d\n",
-        inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+      pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
+      pthread_detach(responder);
+    }
 
-    pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
-    pthread_detach(responder);
+    // 条件変数を見て exit する
+    pthread_mutex_lock(&m);
+    if (to_die) {
+      fprintf(stderr, "bye\n");
+      exit(0);
+    }
+    pthread_mutex_unlock(&m);
   }
 }
 
+void *
+handle_signal (void *arg) {
+  int sig, err;
 
-void
-signal_handler (int name) {
-  fprintf(stderr, "bye\n");
-  exit(0);
-}
+  while (1) {
+    err = sigwait(&signal_set, &sig);
 
-void
-set_signal (int name) {
-  signal(name, signal_handler);
+    if (err != 0) {
+      fprintf(stderr, "[signal thread] sigwait failed. continuing...\n");
+    }
+    else if (sig != SIGINT && sig != SIGTERM) {
+      fprintf(stderr, "[signal thread] caught unexpected signal. continuing...\n");
+    }
+    else {
+      break;
+    }
+  }
+
+  pthread_mutex_lock(&m);
+  to_die = 1;
+  pthread_mutex_unlock(&m);
+
+  // exit(1);
+
+  return NULL;
 }
 
 int
@@ -115,6 +149,7 @@ main(int argc, char **argv)
   char *port_number = NULL;
   int ch, sock, server_port = DEFAULT_SERVER_PORT;
   int debug_mode = 0;
+  pthread_t signal_handler;
 
   while ((ch = getopt(argc, argv, "dp:")) != -1) {
     switch (ch) {
@@ -143,8 +178,14 @@ main(int argc, char **argv)
     daemon(0, 0);
   }
 
-  set_signal(SIGINT);
-  set_signal(SIGTERM);
+  // シグナルマスクの作成
+  sigemptyset(&signal_set);
+  sigaddset(&signal_set, SIGINT);
+  sigaddset(&signal_set, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &signal_set, NULL);
+
+  // シグナルハンドラスレッドの起動
+  pthread_create(&signal_handler, NULL, (void *)handle_signal, NULL);
 
   /*
    * 無限ループでsockをacceptし，acceptしたらそのクライアント用
