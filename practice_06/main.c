@@ -55,6 +55,24 @@ usage(void)
         exit(1);
 }
 
+void
+main_loop (int sock) {
+  struct sockaddr_in client_addr;
+  int length;
+  int client_sock;
+
+  while (1) {
+    length = sizeof(client_addr);
+    client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
+    printf("accepted connection from %s, port=%d\n",
+        inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+    send(client_sock, "HELLO", 5, 0);
+
+    close(client_sock);
+  }
+}
+
 int
 main(int argc, char **argv)
 {
