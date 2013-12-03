@@ -19,6 +19,11 @@
 #define LISTEN_BACKLOG 5
 #endif
 
+// シグナルハンドリングに使用される変数
+sigset_t signal_set;
+int to_die = 0;
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+
 char *program_name = "sp6-server";
 
 int
@@ -89,24 +94,35 @@ main_loop (int sock) {
     client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
     fprintf(stderr, "opened socket [%d].\n", client_sock);
 
-    printf("accepted connection from %s, port=%d\n",
-        inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
     pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
     pthread_detach(responder);
+
+    // 条件変数を見て exit する
+    pthread_mutex_lock(&m);
+    if (to_die) {
+      fprintf(stderr, "bye\n");
+      exit(0);
+    }
+    pthread_mutex_unlock(&m);
   }
 }
 
+void *
+handle_signal (void *arg) {
+  int sig, err;
 
-void
-signal_handler (int name) {
-  fprintf(stderr, "bye\n");
-  exit(0);
-}
+  err = sigwait(&signal_set, &sig);
 
-void
-set_signal (int name) {
-  signal(name, signal_handler);
+  fprintf(stderr, "sig handler.\n");
+  if (err || sig != SIGINT || sig != SIGTERM) {
+    abort();
+  }
+
+  pthread_mutex_lock(&m);
+    to_die = 1;
+  pthread_mutex_unlock(&m);
+
+  return NULL;
 }
 
 int
@@ -115,6 +131,7 @@ main(int argc, char **argv)
   char *port_number = NULL;
   int ch, sock, server_port = DEFAULT_SERVER_PORT;
   int debug_mode = 0;
+  pthread_t signal_handler;
 
   while ((ch = getopt(argc, argv, "dp:")) != -1) {
     switch (ch) {
@@ -143,8 +160,13 @@ main(int argc, char **argv)
     daemon(0, 0);
   }
 
-  set_signal(SIGINT);
-  set_signal(SIGTERM);
+  // シグナルマスクの作成
+  sigemptyset(&signal_set);
+  sigaddset(&signal_set, SIGINT);
+  sigaddset(&signal_set, SIGTERM);
+
+  // シグナルハンドラスレッドの起動
+  pthread_create(&signal_handler, NULL, (void *)handle_signal, NULL);
 
   /*
    * 無限ループでsockをacceptし，acceptしたらそのクライアント用
