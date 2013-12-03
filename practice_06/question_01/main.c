@@ -18,8 +18,6 @@
 #define LISTEN_BACKLOG 5
 #endif
 
-#define CLIENT_MAX_NUM 2
-
 char *program_name = "sp6-server";
 
 int
@@ -72,9 +70,9 @@ respond (void *_sock) {
     fprintf(stderr, "%c", c);
   }
 
-  send(sock, "Bye!\n", 5, 0);
+  send(sock, "disconnected\n", 13, 0);
   close(sock);
-  fprintf(stderr, "closed socket [%d].\n", sock);
+  fprintf(stderr, "socket [%d] disconnected.\n", sock);
 }
 
 void
@@ -90,7 +88,7 @@ main_loop (int sock) {
     client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
     fprintf(stderr, "opened socket [%d].\n", client_sock);
 
-    printf("accepted connection from %s, port=%d\n",
+    printf("accepted connection from %d, port=%d\n",
         inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
     pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
