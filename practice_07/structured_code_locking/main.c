@@ -1,133 +1,69 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
+#include "linked_list.h"
 
-struct entry {
-  struct entry *next;
-  void *data;
-};
+#define PUTTERS_NUM 10
+#define TAKERS_NUM 10
 
-struct list {
-  struct entry *head;
-  struct entry **tail;
-};
+int print_entry (void *, void *);
+int delete_entry (void *, void *);
 
-struct list *
-list_init(void)
-{
+void put (void *);
+void take (void *);
+
+int main (void) {
   struct list *list;
+  struct entry *entry;
+  pthread_t putters[PUTTERS_NUM];
+  pthread_t takers[TAKERS_NUM];
+  int i;
 
-  list = malloc(sizeof *list);
-  if (list == NULL)
-    return (NULL);
-  list->head = NULL;
-  list->tail = &list->head;
-  return (list);
-}
+  list = list_init();
 
-int
-list_enqueue(struct list *list, void *data)
-{
-  struct entry *e;
-
-  e = malloc(sizeof *e);
-  if (e == NULL)
-    return (1);
-  e->next = NULL;
-  e->data = data;
-  *list->tail = e;
-  list->tail = &e->next;
-  return (0);
-}
-
-struct entry *
-list_dequeue(struct list *list)
-{
-  struct entry *e;
-
-  if (list->head == NULL)
-    return(NULL);
-  e = list->head;
-  list->head = e->next;
-  return (e);
-}
-
-struct entry *
-list_traverse(struct list *list, int (*func)(void *, void *), void *user)
-{
-  struct entry **prev, *n, *next;
-
-  if (list == NULL)
-    return (NULL);
-
-  prev = &list->head;
-  for (n = list->head; n != NULL; n = next) {
-    next = n->next;
-    switch (func(n->data, user)) {
-      case 0:
-        /* continues */
-        prev = &n->next;
-        break;
-      case 1:
-        /* delete the entry */
-        *prev = next;
-        if (next == NULL)
-          list->tail = prev;
-        return (n);
-      case -1:
-      default:
-        /* traversal stops */
-        return (NULL);
-    }
+  for (i = 0; i < TAKERS_NUM; i++) {
+    pthread_create(&takers[i], NULL, (void *)take, (void *)list);
+    pthread_create(&putters[i], NULL, (void *)put, (void *)list);
   }
-  return (NULL);
-}
+  for (i = 0; i < PUTTERS_NUM; i++) {
+    pthread_join(putters[i], NULL);
+    pthread_join(takers[i], NULL);
+  }
+  for (i = 0; i < TAKERS_NUM; i++) {
+    pthread_join(takers[i], NULL);
+  }
 
-int
-print_entry(void *e, void *u)
-{
+  printf("items remained on the list:\n");
+  list_traverse(list, print_entry, NULL);
+
+  free(list);
+  return (0);
+} 
+
+int print_entry (void *e, void *u) {
   printf("%s\n", (char *)e);
   return (0);
 }
 
-int
-delete_entry(void *e, void *u)
-{
+int delete_entry (void *e, void *u) {
   char *c1 = e, *c2 = u;
-
   return (!strcmp(c1, c2));
 }
 
-int
-main()
-{
-  struct list *list;
-  struct entry *entry;
+void put (void *_list) {
+  char *str = malloc(sizeof(char) * 32);
 
-  list = list_init();
+  snprintf(str, 32, "%d", (int)pthread_self());
 
-  /* enqueue data */
-  list_enqueue(list, strdup("first"));
-  list_enqueue(list, strdup("second"));
-  list_enqueue(list, strdup("third"));
+  list_enqueue((struct list *)_list, (void*)str);
+}
 
-  /* entry list */
-  list_traverse(list, print_entry, NULL);
-
-  /* delete "second" entry */
-  entry = list_traverse(list, delete_entry, "second");
+void take (void *_list) {
+  struct entry *entry = list_dequeue((struct list *)_list);
   if (entry != NULL) {
     free(entry->data);
     free(entry);
   }
-
-  /* dequeue data */
-  while ((entry = list_dequeue(list)) != NULL) {
-    printf("%s\n", (char *)entry->data);
-    free(entry->data);
-    free(entry);
-  }
-  free(list);
-  return (0);
-} 
+}
 
