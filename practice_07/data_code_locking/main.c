@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <unistd.h>
 #include "linked_list.h"
 
 #define PUTTERS_NUM 10
@@ -30,20 +31,35 @@ void join_test_threads(THREAD_SET *, THREAD_SET *);
 // リストの後始末
 void settle_list(struct list *, char *);
 
+// スレッド
 void put (void *);
 void take (void *);
+void block (void *);
 
 int main (void) {
-  struct list *list;
-  THREAD_SET putter_set = {length: PUTTERS_NUM};
-  THREAD_SET taker_set = {length: TAKERS_NUM};
+  struct list *list_a, *list_b;
+  THREAD_SET putter_set_a = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_a = {length: TAKERS_NUM};
 
-  list = list_init();
+  THREAD_SET putter_set_b = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_b = {length: TAKERS_NUM};
 
-  create_test_threads(list, "A", &putter_set, &taker_set);
-  join_test_threads(&putter_set, &taker_set);
+  pthread_t list_a_blocker;
 
-  settle_list(list, "A");
+  list_a = list_init();
+  list_b = list_init();
+
+  pthread_create(&list_a_blocker, NULL, (void *)block, (void *)list_a);
+  pthread_detach(list_a_blocker);
+
+  create_test_threads(list_a, "A", &putter_set_a, &taker_set_a);
+  create_test_threads(list_b, "B", &putter_set_b, &taker_set_b);
+
+  join_test_threads(&putter_set_a, &taker_set_a);
+  join_test_threads(&putter_set_b, &taker_set_b);
+
+  settle_list(list_a, "A");
+  settle_list(list_b, "B");
 
   return (0);
 } 
@@ -124,6 +140,14 @@ void take (void *_list) {
     free(entry->data);
     free(entry);
   }
+}
+
+void block (void *_list) {
+  struct list *list = (struct list *)_list;
+  pthread_mutex_lock(&list->lock);
+  printf("BLOCKING LIST!\n");
+  usleep(1*1000*1000);
+  pthread_mutex_unlock(&list->lock);
 }
 
 int print_entry (void *e, void *u) {
