@@ -1,3 +1,5 @@
+#include <pthread.h>
+
 #ifndef LINKED_LIST_H
 #define LINKED_LIST_H
 
@@ -10,6 +12,9 @@ struct list {
   struct entry *head;
   struct entry **tail;
 };
+
+pthread_mutex_t c_lock;
+int c_lock_initialized;
 
 extern struct list *list_init (void);
 extern int list_enqueue (struct list *, void *);

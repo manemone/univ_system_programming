@@ -8,14 +8,20 @@
 #define C_YELLOW "\x1b[33m"
 #define C_DEFAULT "\x1b[39m"
 
+#define C_LOCK_INITIALIZED 1
+
 // 色付き文字を出力
 void printf_with_colors(char *, char *, char *, ...);
 
-// リストへの mutex
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+// pthread_mutex_init(c_lock, NULL);
+
 
 struct list *list_init (void) {
   struct list *list;
+
+  if (c_lock_initialized != C_LOCK_INITIALIZED) {
+    pthread_mutex_init(&c_lock, NULL);
+  }
 
   list = malloc(sizeof *list);
   if (list == NULL)
@@ -35,13 +41,13 @@ int list_enqueue (struct list *list, void *data) {
   e->next = NULL;
   e->data = data;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&c_lock);
 
   *list->tail = e;
   list->tail = &e->next;
   printf_with_colors(C_GREEN, C_DEFAULT, "+ %s\n", (char *)data);
   
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&c_lock);
 
   return (0);
 }
@@ -52,7 +58,7 @@ struct entry *list_dequeue (struct list *list) {
 
   ret = NULL;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&c_lock);
 
   if (list->head == NULL) {
     printf_with_colors(C_YELLOW, C_DEFAULT, "- failed. the list is empty.\n");
@@ -67,7 +73,7 @@ struct entry *list_dequeue (struct list *list) {
   ret = e;
 
 finish:
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&c_lock);
   return ret;
 }
 
@@ -75,7 +81,7 @@ struct entry *list_traverse (struct list *list, int (*func)(void *, void *), voi
   struct entry **prev, *n, *next;
   struct entry *ret;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&c_lock);
 
   if (list == NULL) {
     ret = NULL;
@@ -107,7 +113,7 @@ struct entry *list_traverse (struct list *list, int (*func)(void *, void *), voi
   ret = NULL;
 
 finish:
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&c_lock);
   return ret;
 }
 
