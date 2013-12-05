@@ -1,3 +1,5 @@
+#include <pthread.h>
+
 #ifndef LINKED_LIST_H
 #define LINKED_LIST_H
 
@@ -9,6 +11,7 @@ struct entry {
 struct list {
   struct entry *head;
   struct entry **tail;
+  pthread_mutex_t lock;
 };
 
 extern struct list *list_init (void);

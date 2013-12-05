@@ -11,9 +11,6 @@
 // 色付き文字を出力
 void printf_with_colors(char *, char *, char *, ...);
 
-// リストへの mutex
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-
 struct list *list_init (void) {
   struct list *list;
 
@@ -22,6 +19,7 @@ struct list *list_init (void) {
     return (NULL);
   list->head = NULL;
   list->tail = &list->head;
+  pthread_mutex_init(&list->lock, NULL);
   return (list);
 }
 
@@ -35,13 +33,13 @@ int list_enqueue (struct list *list, void *data) {
   e->next = NULL;
   e->data = data;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&list->lock);
 
   *list->tail = e;
   list->tail = &e->next;
   printf_with_colors(C_GREEN, C_DEFAULT, "+ %s\n", (char *)data);
   
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&list->lock);
 
   return (0);
 }
@@ -52,7 +50,7 @@ struct entry *list_dequeue (struct list *list) {
 
   ret = NULL;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&list->lock);
 
   if (list->head == NULL) {
     printf_with_colors(C_YELLOW, C_DEFAULT, "- failed. the list is empty.\n");
@@ -67,7 +65,7 @@ struct entry *list_dequeue (struct list *list) {
   ret = e;
 
 finish:
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&list->lock);
   return ret;
 }
 
@@ -75,7 +73,7 @@ struct entry *list_traverse (struct list *list, int (*func)(void *, void *), voi
   struct entry **prev, *n, *next;
   struct entry *ret;
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&list->lock);
 
   if (list == NULL) {
     ret = NULL;
@@ -107,7 +105,7 @@ struct entry *list_traverse (struct list *list, int (*func)(void *, void *), voi
   ret = NULL;
 
 finish:
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&list->lock);
   return ret;
 }
 
