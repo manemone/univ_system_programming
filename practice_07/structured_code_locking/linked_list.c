@@ -1,6 +1,15 @@
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "linked_list.h"
+
+#define C_RED "\x1b[31m"
+#define C_GREEN "\x1b[32m"
+#define C_YELLOW "\x1b[33m"
+#define C_DEFAULT "\x1b[39m"
+
+// 色付き文字を出力
+void printf_with_colors(char *, char *, char *, ...);
 
 // リストへの mutex
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -30,7 +39,7 @@ int list_enqueue (struct list *list, void *data) {
 
   *list->tail = e;
   list->tail = &e->next;
-  printf("+ %s\n", (char *)data);
+  printf_with_colors(C_GREEN, C_DEFAULT, "+ %s\n", (char *)data);
   
   pthread_mutex_unlock(&lock);
 
@@ -46,7 +55,7 @@ struct entry *list_dequeue (struct list *list) {
   pthread_mutex_lock(&lock);
 
   if (list->head == NULL) {
-    printf("- NULL!\n");
+    printf_with_colors(C_YELLOW, C_DEFAULT, "- failed. the list is empty.\n");
     goto finish;
   }
   e = list->head;
@@ -54,7 +63,7 @@ struct entry *list_dequeue (struct list *list) {
   if (list->head == NULL) {
     list->tail = &list->head;
   }
-   printf("- %s\n", (char *)e->data);
+   printf_with_colors(C_RED, C_DEFAULT, "- %s\n", (char *)e->data);
   ret = e;
 
 finish:
@@ -102,3 +111,12 @@ finish:
   return ret;
 }
 
+void printf_with_colors(char *color, char *returning_color, char *format, ...) {
+  va_list args;
+
+  printf("%s", color);
+  va_start(args, format);
+  vprintf(format, args);
+  va_end(args);
+  printf("%s", returning_color);
+}
