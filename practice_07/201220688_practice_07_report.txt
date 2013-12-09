@@ -1,0 +1,814 @@
+システムプログラミング特論
+演習 7 レポート
+201220688 濱田一喜
+
+演習問題 [7-1]
+連結リストのサンプルをコードロッキングによりスレッドセーフにする。
+
+プログラム
+概要
+プログラムは整理するため以下の3ファイルに分割されている。
+* main.c 
+  テストコードが含まれる。
+* linked_list.c
+  連結リストを実現するコードが含まれる。
+* linked_list.h
+  linked_list.c で使用される構造体の宣言や関数の extern 宣言が含まれる。
+
+linked_list.h にひとつの mutex を用意しておき、全ての連結リスト操作関数は操作の直前にこの mutex をロックさせる。
+テストコードでは、ふたつのリストA、B に対してそれぞれ10ずつのエンキュー／デキュースレッドを用意し、同時にアクセスさせる。
+さらに、mutex を掴んだまま 1 秒間停止する blocker スレッドを生成し、その他のスレッドがどのように振る舞うかを観察する。
+
+
+ソースリスト
+/* main.c */
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+#include "linked_list.h"
+
+#define PUTTERS_NUM 10
+#define TAKERS_NUM 10
+#define MESSAGE_LENGTH 32
+
+// テスト用スレッドの組
+typedef struct {
+  pthread_t *threads;
+  int length;
+} THREAD_SET;
+
+// エンキュー／デキュースレッドに渡す構造体
+typedef struct {
+  struct list *list;
+  void *data;
+} ENTRY_PACK;
+
+int print_entry (void *, void *);
+int delete_entry (void *, void *);
+
+// スレッドの管理
+void create_test_threads(struct list *, char *, THREAD_SET *, THREAD_SET *);
+void join_test_threads(THREAD_SET *, THREAD_SET *);
+
+// リストの後始末
+void settle_list(struct list *, char *);
+
+// スレッド
+void put (void *);
+void take (void *);
+void block (void *);
+
+int main (void) {
+  struct list *list_a, *list_b;
+  THREAD_SET putter_set_a = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_a = {length: TAKERS_NUM};
+
+  THREAD_SET putter_set_b = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_b = {length: TAKERS_NUM};
+
+  pthread_t list_a_blocker;
+
+  list_a = list_init();
+  list_b = list_init();
+
+  pthread_create(&list_a_blocker, NULL, (void *)block, (void *)list_a);
+  pthread_detach(list_a_blocker);
+
+  create_test_threads(list_a, "A", &putter_set_a, &taker_set_a);
+  create_test_threads(list_b, "B", &putter_set_b, &taker_set_b);
+
+  join_test_threads(&putter_set_a, &taker_set_a);
+  join_test_threads(&putter_set_b, &taker_set_b);
+
+  settle_list(list_a, "A");
+  settle_list(list_b, "B");
+
+  return (0);
+} 
+
+void create_test_threads(struct list *list, char *name, THREAD_SET *putter_set, THREAD_SET *taker_set) {
+  struct entry *entry;
+  int i;
+
+  // エンキュースレッドに渡すデータ
+  char **messages = (char **)malloc(sizeof(char *)*putter_set->length);
+  ENTRY_PACK *entry_packs = (ENTRY_PACK *)malloc(sizeof(ENTRY_PACK)*putter_set->length);
+
+  // エンキュースレッドに渡すデータを生成。
+  // スレッド起動ループ内でひとつずつ作成せず事前に作成するのは
+  // スレッド起動ループ 1回のコストを抑えて、各スレッドの起動をなるべく同時にしたいから。
+  for (i = 0; i < putter_set->length; i++) {
+    messages[i] = (char *)malloc(sizeof(char)*MESSAGE_LENGTH);
+    snprintf(messages[i], MESSAGE_LENGTH, "list: %s, entry [%d]", name, i);
+    entry_packs[i].list = list;
+    entry_packs[i].data = messages[i];
+  }
+
+  // スレッドの起動
+  putter_set->threads = (pthread_t *)malloc(sizeof(pthread_t)*putter_set->length);
+  taker_set->threads = (pthread_t *)malloc(sizeof(pthread_t)*taker_set->length);
+  for (i = 0; i < putter_set->length || i < taker_set->length; i++) {
+    if (i < taker_set->length) {
+      pthread_create(&taker_set->threads[i], NULL, (void *)take, (void *)list);
+    }
+    if (i < putter_set->length) {
+      pthread_create(&putter_set->threads[i], NULL, (void *)put, (void *)&entry_packs[i]);
+    }
+  }
+}
+
+void join_test_threads(THREAD_SET *putter_set, THREAD_SET *taker_set) {
+  int i;
+
+  for (i = 0; i < putter_set->length; i++) {
+    pthread_join(putter_set->threads[i], NULL);
+  }
+  for (i = 0; i < taker_set->length; i++) {
+    pthread_join(taker_set->threads[i], NULL);
+  }
+
+  // スレッド変数の free
+  free(putter_set->threads);
+  free(taker_set->threads);
+}
+
+void settle_list(struct list *list, char *name) {
+  struct entry *entry;
+
+  // リストに残った要素を表示
+  printf("\nentries remain on the list %s:\n", name);
+  list_traverse(list, print_entry, NULL);
+
+  // リストに残った要素を削除
+  printf("\ndeque/free-ing remaining entries in the list %s...\n", name);
+  while((entry = list_dequeue(list)) != NULL) {
+    free(entry->data);
+    free(entry);
+  }
+
+  free(list);
+}
+
+void put (void *_entry_pack) {
+  ENTRY_PACK *entry_pack = (ENTRY_PACK *)_entry_pack;
+
+  list_enqueue(entry_pack->list, entry_pack->data);
+}
+
+void take (void *_list) {
+  struct entry *entry = list_dequeue((struct list *)_list);
+
+  if (entry != NULL) {
+    free(entry->data);
+    free(entry);
+  }
+}
+
+void block (void *_list) {
+  pthread_mutex_lock(&c_lock);
+  printf("BLOCKING CODE!\n");
+  usleep(1*1000*1000);
+  pthread_mutex_unlock(&c_lock);
+}
+
+int print_entry (void *e, void *u) {
+  printf("* %s\n", (char *)e);
+  return (0);
+}
+
+int delete_entry (void *e, void *u) {
+  char *c1 = e, *c2 = u;
+  return (!strcmp(c1, c2));
+}
+
+
+/* linked_list.h */
+#include <pthread.h>
+
+#ifndef LINKED_LIST_H
+#define LINKED_LIST_H
+
+struct entry {
+  struct entry *next;
+  void *data;
+};
+
+struct list {
+  struct entry *head;
+  struct entry **tail;
+};
+
+pthread_mutex_t c_lock;
+int c_lock_initialized;
+
+extern struct list *list_init (void);
+extern int list_enqueue (struct list *, void *);
+extern struct entry *list_dequeue (struct list *);
+extern struct entry *list_traverse (struct list *, int (*func)(void *, void *), void *);
+
+#endif
+
+
+/* linked_list.c */
+#include <pthread.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include "linked_list.h"
+
+#define C_RED "\x1b[31m"
+#define C_GREEN "\x1b[32m"
+#define C_YELLOW "\x1b[33m"
+#define C_DEFAULT "\x1b[39m"
+
+#define C_LOCK_INITIALIZED 1
+
+// 色付き文字を出力
+void printf_with_colors(char *, char *, char *, ...);
+
+// pthread_mutex_init(c_lock, NULL);
+
+
+struct list *list_init (void) {
+  struct list *list;
+
+  if (c_lock_initialized != C_LOCK_INITIALIZED) {
+    pthread_mutex_init(&c_lock, NULL);
+  }
+
+  list = malloc(sizeof *list);
+  if (list == NULL)
+    return (NULL);
+  list->head = NULL;
+  list->tail = &list->head;
+  return (list);
+}
+
+int list_enqueue (struct list *list, void *data) {
+  struct entry *e;
+
+  e = malloc(sizeof *e);
+  if (e == NULL)
+    return (1);
+
+  e->next = NULL;
+  e->data = data;
+
+  pthread_mutex_lock(&c_lock);
+
+  *list->tail = e;
+  list->tail = &e->next;
+  printf_with_colors(C_GREEN, C_DEFAULT, "+ %s\n", (char *)data);
+  
+  pthread_mutex_unlock(&c_lock);
+
+  return (0);
+}
+
+struct entry *list_dequeue (struct list *list) {
+  struct entry *e;
+  struct entry *ret;
+
+  ret = NULL;
+
+  pthread_mutex_lock(&c_lock);
+
+  if (list->head == NULL) {
+    printf_with_colors(C_YELLOW, C_DEFAULT, "- failed. the list is empty.\n");
+    goto finish;
+  }
+  e = list->head;
+  list->head = e->next;
+  if (list->head == NULL) {
+    list->tail = &list->head;
+  }
+   printf_with_colors(C_RED, C_DEFAULT, "- %s\n", (char *)e->data);
+  ret = e;
+
+finish:
+  pthread_mutex_unlock(&c_lock);
+  return ret;
+}
+
+struct entry *list_traverse (struct list *list, int (*func)(void *, void *), void *user) {
+  struct entry **prev, *n, *next;
+  struct entry *ret;
+
+  pthread_mutex_lock(&c_lock);
+
+  if (list == NULL) {
+    ret = NULL;
+    goto finish;
+  }
+
+  prev = &list->head;
+  for (n = list->head; n != NULL; n = next) {
+    next = n->next;
+    switch (func(n->data, user)) {
+      case 0:
+        /* continues */
+        prev = &n->next;
+        break;
+      case 1:
+        /* delete the entry */
+        *prev = next;
+        if (next == NULL)
+          list->tail = prev;
+        ret = n;
+        goto finish;
+      case -1:
+      default:
+        /* traversal stops */
+        ret = NULL;
+        goto finish;
+    }
+  }
+  ret = NULL;
+
+finish:
+  pthread_mutex_unlock(&c_lock);
+  return ret;
+}
+
+void printf_with_colors(char *color, char *returning_color, char *format, ...) {
+  va_list args;
+
+  printf("%s", color);
+  va_start(args, format);
+  vprintf(format, args);
+  va_end(args);
+  printf("%s", returning_color);
+}
+
+
+実行結果
+$ ./a.out 
+BLOCKING CODE!
+- failed. the list is empty.
++ list: A, entry [0]
+- list: A, entry [0]
++ list: A, entry [1]
+- list: A, entry [1]
++ list: A, entry [2]
+- list: A, entry [2]
++ list: A, entry [3]
+- list: A, entry [3]
++ list: A, entry [4]
+- list: A, entry [4]
++ list: A, entry [5]
+- list: A, entry [5]
++ list: A, entry [6]
+- list: A, entry [6]
++ list: A, entry [7]
+- list: A, entry [7]
++ list: A, entry [8]
+- list: A, entry [8]
++ list: A, entry [9]
+- failed. the list is empty.
++ list: B, entry [0]
+- list: B, entry [0]
++ list: B, entry [1]
+- list: B, entry [1]
++ list: B, entry [2]
+- list: B, entry [2]
++ list: B, entry [3]
+- list: B, entry [3]
++ list: B, entry [4]
+- list: B, entry [4]
++ list: B, entry [5]
+- list: B, entry [5]
++ list: B, entry [6]
+- list: B, entry [6]
++ list: B, entry [7]
+- list: B, entry [7]
++ list: B, entry [8]
+- list: B, entry [8]
++ list: B, entry [9]
+
+entries remain on the list A:
+* list: A, entry [9]
+
+deque/free-ing remaining entries in the list A...
+- list: A, entry [9]
+- failed. the list is empty.
+
+entries remain on the list B:
+* list: B, entry [9]
+
+deque/free-ing remaining entries in the list B...
+- list: B, entry [9]
+- failed. the list is empty.
+
+
+考察
+リストの操作は正しく行われており、全てのスレッドが動作し終わった状態で構造は壊れていない。
+blocker が mutex を掴むと、それ以外のスレッドはその操作対象のリストによらず mutex の解除待ちで停止しており、
+コードレベルでのブロッキングが行われていることがわかる。
+
+
+
+
+演習問題 [7-2]
+連結リストのサンプルをデータロッキングによりスレッドセーフにする。
+
+
+プログラム
+概要
+プログラムは整理するため以下の3ファイルに分割されている。
+* main.c 
+  テストコードが含まれる。
+* linked_list.c
+  連結リストを実現するコードが含まれる。
+* linked_list.h
+  linked_list.c で使用される構造体の宣言や関数の extern 宣言が含まれる。
+
+linked_list.h のリスト構造体に mutex を定義しておき、連結リスト操作関数は操作の直前にリストごとの mutex をロックさせる。
+テストコードでは、ふたつのリストA、B に対してそれぞれ10ずつのエンキュー／デキュースレッドを用意し、同時にアクセスさせる。
+さらに、リスト A の mutex を掴んだまま 1 秒間停止する blocker スレッドを生成し、その他のスレッドがどのように振る舞うかを観察する。
+
+
+ソースリスト
+/* main.c */
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+#include "linked_list.h"
+
+#define PUTTERS_NUM 10
+#define TAKERS_NUM 10
+#define MESSAGE_LENGTH 32
+
+// テスト用スレッドの組
+typedef struct {
+  pthread_t *threads;
+  int length;
+} THREAD_SET;
+
+// エンキュー／デキュースレッドに渡す構造体
+typedef struct {
+  struct list *list;
+  void *data;
+} ENTRY_PACK;
+
+int print_entry (void *, void *);
+int delete_entry (void *, void *);
+
+// スレッドの管理
+void create_test_threads(struct list *, char *, THREAD_SET *, THREAD_SET *);
+void join_test_threads(THREAD_SET *, THREAD_SET *);
+
+// リストの後始末
+void settle_list(struct list *, char *);
+
+// スレッド
+void put (void *);
+void take (void *);
+void block (void *);
+
+int main (void) {
+  struct list *list_a, *list_b;
+  THREAD_SET putter_set_a = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_a = {length: TAKERS_NUM};
+
+  THREAD_SET putter_set_b = {length: PUTTERS_NUM};
+  THREAD_SET taker_set_b = {length: TAKERS_NUM};
+
+  pthread_t list_a_blocker;
+
+  list_a = list_init();
+  list_b = list_init();
+
+  pthread_create(&list_a_blocker, NULL, (void *)block, (void *)list_a);
+  pthread_detach(list_a_blocker);
+
+  create_test_threads(list_a, "A", &putter_set_a, &taker_set_a);
+  create_test_threads(list_b, "B", &putter_set_b, &taker_set_b);
+
+  join_test_threads(&putter_set_a, &taker_set_a);
+  join_test_threads(&putter_set_b, &taker_set_b);
+
+  settle_list(list_a, "A");
+  settle_list(list_b, "B");
+
+  return (0);
+} 
+
+void create_test_threads(struct list *list, char *name, THREAD_SET *putter_set, THREAD_SET *taker_set) {
+  struct entry *entry;
+  int i;
+
+  // エンキュースレッドに渡すデータ
+  char **messages = (char **)malloc(sizeof(char *)*putter_set->length);
+  ENTRY_PACK *entry_packs = (ENTRY_PACK *)malloc(sizeof(ENTRY_PACK)*putter_set->length);
+
+  // エンキュースレッドに渡すデータを生成。
+  // スレッド起動ループ内でひとつずつ作成せず事前に作成するのは
+  // スレッド起動ループ 1回のコストを抑えて、各スレッドの起動をなるべく同時にしたいから。
+  for (i = 0; i < putter_set->length; i++) {
+    messages[i] = (char *)malloc(sizeof(char)*MESSAGE_LENGTH);
+    snprintf(messages[i], MESSAGE_LENGTH, "list: %s, entry [%d]", name, i);
+    entry_packs[i].list = list;
+    entry_packs[i].data = messages[i];
+  }
+
+  // スレッドの起動
+  putter_set->threads = (pthread_t *)malloc(sizeof(pthread_t)*putter_set->length);
+  taker_set->threads = (pthread_t *)malloc(sizeof(pthread_t)*taker_set->length);
+  for (i = 0; i < putter_set->length || i < taker_set->length; i++) {
+    if (i < taker_set->length) {
+      pthread_create(&taker_set->threads[i], NULL, (void *)take, (void *)list);
+    }
+    if (i < putter_set->length) {
+      pthread_create(&putter_set->threads[i], NULL, (void *)put, (void *)&entry_packs[i]);
+    }
+  }
+}
+
+void join_test_threads(THREAD_SET *putter_set, THREAD_SET *taker_set) {
+  int i;
+
+  for (i = 0; i < putter_set->length; i++) {
+    pthread_join(putter_set->threads[i], NULL);
+  }
+  for (i = 0; i < taker_set->length; i++) {
+    pthread_join(taker_set->threads[i], NULL);
+  }
+
+  // スレッド変数の free
+  free(putter_set->threads);
+  free(taker_set->threads);
+}
+
+void settle_list(struct list *list, char *name) {
+  struct entry *entry;
+
+  // リストに残った要素を表示
+  printf("\nentries remain on the list %s:\n", name);
+  list_traverse(list, print_entry, NULL);
+
+  // リストに残った要素を削除
+  printf("\ndeque/free-ing remaining entries in the list %s...\n", name);
+  while((entry = list_dequeue(list)) != NULL) {
+    free(entry->data);
+    free(entry);
+  }
+
+  free(list);
+}
+
+void put (void *_entry_pack) {
+  ENTRY_PACK *entry_pack = (ENTRY_PACK *)_entry_pack;
+
+  list_enqueue(entry_pack->list, entry_pack->data);
+}
+
+void take (void *_list) {
+  struct entry *entry = list_dequeue((struct list *)_list);
+
+  if (entry != NULL) {
+    free(entry->data);
+    free(entry);
+  }
+}
+
+void block (void *_list) {
+  struct list *list = (struct list *)_list;
+  pthread_mutex_lock(&list->lock);
+  printf("BLOCKING LIST!\n");
+  usleep(1*1000*1000);
+  pthread_mutex_unlock(&list->lock);
+}
+
+int print_entry (void *e, void *u) {
+  printf("* %s\n", (char *)e);
+  return (0);
+}
+
+int delete_entry (void *e, void *u) {
+  char *c1 = e, *c2 = u;
+  return (!strcmp(c1, c2));
+}
+
+
+/* linked_list.h */
+#include <pthread.h>
+
+#ifndef LINKED_LIST_H
+#define LINKED_LIST_H
+
+struct entry {
+  struct entry *next;
+  void *data;
+};
+
+struct list {
+  struct entry *head;
+  struct entry **tail;
+  pthread_mutex_t lock;
+};
+
+extern struct list *list_init (void);
+extern int list_enqueue (struct list *, void *);
+extern struct entry *list_dequeue (struct list *);
+extern struct entry *list_traverse (struct list *, int (*func)(void *, void *), void *);
+
+#endif
+
+
+/* linked_list.c */
+#include <pthread.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include "linked_list.h"
+
+#define C_RED "\x1b[31m"
+#define C_GREEN "\x1b[32m"
+#define C_YELLOW "\x1b[33m"
+#define C_DEFAULT "\x1b[39m"
+
+// 色付き文字を出力
+void printf_with_colors(char *, char *, char *, ...);
+
+struct list *list_init (void) {
+  struct list *list;
+
+  list = malloc(sizeof *list);
+  if (list == NULL)
+    return (NULL);
+  list->head = NULL;
+  list->tail = &list->head;
+  pthread_mutex_init(&list->lock, NULL);
+  return (list);
+}
+
+int list_enqueue (struct list *list, void *data) {
+  struct entry *e;
+
+  e = malloc(sizeof *e);
+  if (e == NULL)
+    return (1);
+
+  e->next = NULL;
+  e->data = data;
+
+  pthread_mutex_lock(&list->lock);
+
+  *list->tail = e;
+  list->tail = &e->next;
+  printf_with_colors(C_GREEN, C_DEFAULT, "+ %s\n", (char *)data);
+  
+  pthread_mutex_unlock(&list->lock);
+
+  return (0);
+}
+
+struct entry *list_dequeue (struct list *list) {
+  struct entry *e;
+  struct entry *ret;
+
+  ret = NULL;
+
+  pthread_mutex_lock(&list->lock);
+
+  if (list->head == NULL) {
+    printf_with_colors(C_YELLOW, C_DEFAULT, "- failed. the list is empty.\n");
+    goto finish;
+  }
+  e = list->head;
+  list->head = e->next;
+  if (list->head == NULL) {
+    list->tail = &list->head;
+  }
+   printf_with_colors(C_RED, C_DEFAULT, "- %s\n", (char *)e->data);
+  ret = e;
+
+finish:
+  pthread_mutex_unlock(&list->lock);
+  return ret;
+}
+
+struct entry *list_traverse (struct list *list, int (*func)(void *, void *), void *user) {
+  struct entry **prev, *n, *next;
+  struct entry *ret;
+
+  pthread_mutex_lock(&list->lock);
+
+  if (list == NULL) {
+    ret = NULL;
+    goto finish;
+  }
+
+  prev = &list->head;
+  for (n = list->head; n != NULL; n = next) {
+    next = n->next;
+    switch (func(n->data, user)) {
+      case 0:
+        /* continues */
+        prev = &n->next;
+        break;
+      case 1:
+        /* delete the entry */
+        *prev = next;
+        if (next == NULL)
+          list->tail = prev;
+        ret = n;
+        goto finish;
+      case -1:
+      default:
+        /* traversal stops */
+        ret = NULL;
+        goto finish;
+    }
+  }
+  ret = NULL;
+
+finish:
+  pthread_mutex_unlock(&list->lock);
+  return ret;
+}
+
+void printf_with_colors(char *color, char *returning_color, char *format, ...) {
+  va_list args;
+
+  printf("%s", color);
+  va_start(args, format);
+  vprintf(format, args);
+  va_end(args);
+  printf("%s", returning_color);
+}
+
+
+実行結果
+$ ./a.out 
+BLOCKING LIST!
+- failed. the list is empty.
++ list: B, entry [0]
+- list: B, entry [0]
++ list: B, entry [1]
+- list: B, entry [1]
++ list: B, entry [2]
+- list: B, entry [2]
++ list: B, entry [3]
+- list: B, entry [3]
++ list: B, entry [4]
+- list: B, entry [4]
++ list: B, entry [5]
+- list: B, entry [5]
++ list: B, entry [6]
+- list: B, entry [6]
++ list: B, entry [7]
+- list: B, entry [7]
++ list: B, entry [8]
+- list: B, entry [8]
++ list: B, entry [9]
+- failed. the list is empty.
++ list: A, entry [0]
+- list: A, entry [0]
++ list: A, entry [1]
+- list: A, entry [1]
++ list: A, entry [2]
+- list: A, entry [2]
++ list: A, entry [3]
+- list: A, entry [3]
++ list: A, entry [4]
+- list: A, entry [4]
++ list: A, entry [5]
+- list: A, entry [5]
++ list: A, entry [6]
+- list: A, entry [6]
++ list: A, entry [7]
+- list: A, entry [7]
++ list: A, entry [8]
+- list: A, entry [8]
++ list: A, entry [9]
+
+entries remain on the list A:
+* list: A, entry [9]
+
+deque/free-ing remaining entries in the list A...
+- list: A, entry [9]
+- failed. the list is empty.
+
+entries remain on the list B:
+* list: B, entry [9]
+
+deque/free-ing remaining entries in the list B...
+- list: B, entry [9]
+- failed. the list is empty.
+
+
+考察
+リストの操作は正しく行われており、全てのスレッドが動作し終わった状態で構造は壊れていない。
+blocker がリスト A の mutex を掴むと、リスト A の操作スレッドは解除待ちとなって実行が遅れる。
+一方リスト B の操作スレッドは blocker の影響を受けずに動作し、リスト A の操作スレッドに先立ってすべての処理を終えている。
+このことから、リスト構造ごとのデータレベルブロッキングが行われていることがわかる。
+
+
+
+
+講義の感想
+不変式をどう使えばよいのかが想像しにくかった。具体的な例を上げていただければ理解が進むと思う。
+
