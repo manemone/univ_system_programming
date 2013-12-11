@@ -11,14 +11,28 @@
 #include <poll.h>
 
 #include "echo_reply.h"
+#include "circular_buffer.h"
 #include "logutil.h"
 
 // プログラム名
 char *program_name = "sp6-server";
 
+// 巡回バッファ
+circ_buf_t *buffer;
+
 // シグナルハンドリングに使用される変数
 int to_die = 0;
 pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+
+// 巡回バッファの初期化
+void initialize_circular_buffer (void) {
+  buffer = (circ_buf_t *)malloc(sizeof(circ_buf_t));
+  pthread_mutex_init(&buffer->buf_lock, NULL);
+  buffer->start = 0;
+  buffer->num_full = 0;
+  pthread_cond_init(&buffer->notfull, NULL);
+  pthread_cond_init(&buffer->notempty, NULL);
+}
 
 // 使い方の表示
 void usage (void) {
@@ -54,10 +68,9 @@ int open_accepting_socket (int port) {
   return (sock);
 }
 
-void respond (void *_sock) {
+void respond (int sock) {
   char c;
   FILE *fp;
-  int sock = (int)_sock;
 
   send(sock, "HELLO. what you type will be echo back to you.\n", 47, 0);
 
@@ -72,14 +85,40 @@ void respond (void *_sock) {
   fprintf(stderr, "closed socket [%d].\n", sock);
 }
 
-void main_loop (int sock) {
+// スレッド作成のリクエストオブジェクトを作成
+REQUEST *create_thread_request (int sock, void (*func)(int)) {
+  REQUEST *req;
+
+  req = (REQUEST *)malloc(sizeof(REQUEST));
+
+  req->sock = sock;
+  req->func = func;
+
+  return req;
+}
+
+// リクエストを処理
+void handle_request (void *arg) {
+  REQUEST *req;
+  
+  while (1) {
+    req = (REQUEST *)get_cb_data(buffer);
+    (req->func)(req->sock);
+    free(req);
+  }
+}
+
+// 接続を受け付けてリクエストキューに追加
+void create_request (void *_sock) {
+  // accept 関連
+  int sock = (int)_sock;
   struct sockaddr_in client_addr;
   int length;
   int client_sock;
+
+  // poll 関連
   int client_ready;
-  pthread_t responder;
   struct pollfd pfd;
-  int i, j;
 
   length = sizeof(client_addr);
   pfd.fd = sock;
@@ -91,8 +130,8 @@ void main_loop (int sock) {
       client_sock = accept(sock, (struct sockaddr *)&client_addr, &length);
       fprintf(stderr, "opened socket [%d].\n", client_sock);
 
-      pthread_create(&responder, NULL, (void *)respond, (void *)client_sock);
-      pthread_detach(responder);
+      // スレッド作成のリクエストを作成
+      put_cb_data(buffer, (void *)create_thread_request(client_sock, respond));
     }
 
     // 条件変数を見て exit する

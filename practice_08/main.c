@@ -3,83 +3,24 @@
 #include <errno.h>
 #include <string.h>
 #include <syslog.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
-#include <poll.h>
 
 #include <unistd.h>
 #include <pthread.h>
 
-#include "circular_buffer.h"
 #include "echo_reply.h"
 #include "logutil.h"
-
-// 巡回バッファ
-circ_buf_t *buffer;
-
-/* エンキューのスレッド */
-void enqueue (void *_no) {
-  int no = (int)_no;
-  int i;
-
-  for (i = 0; i < ENQUEUE_UNIT; i++) {
-    put_cb_data(buffer, (void *)no);
-  }
-}
-
-/* デキューのスレッド */
-void dequeue (void *_no) {
-  int no = (int)_no;
-  int i;
-
-  for (i = 0; i < DEQUEUE_UNIT; i++) {
-    get_cb_data(buffer);
-  }
-}
-
-// 巡回バッファの初期化
-void initialize_circular_buffer (void) {
-  buffer = (circ_buf_t *)malloc(sizeof(circ_buf_t));
-  pthread_mutex_init(&buffer->buf_lock, NULL);
-  buffer->start = 0;
-  buffer->num_full = 0;
-  pthread_cond_init(&buffer->notfull, NULL);
-  pthread_cond_init(&buffer->notempty, NULL);
-}
-
-// 巡回バッファ操作スレッドの起動とジョイン
-void operate_circular_buffer (void) {
-  pthread_t enquerors[ENQUEUEROR_NUM];
-  pthread_t dequerors[DEQUEUEROR_NUM];
-  int i;
-
-  for (i = 0; i < ENQUEUEROR_NUM; i++) {
-    pthread_create(&enquerors[i], NULL, (void *)enqueue, (void *)i);
-  }
-  for (i = 0; i < DEQUEUEROR_NUM; i++) {
-    pthread_create(&dequerors[i], NULL, (void *)dequeue, (void *)i);
-  }
-
-  for (i = 0; i < ENQUEUEROR_NUM; i++) {
-    pthread_join(enquerors[i], NULL);
-  }
-  for (i = 0; i < DEQUEUEROR_NUM; i++) {
-    pthread_join(dequerors[i], NULL);
-  }
-}
 
 int main (int argc, char **argv) {
   char *port_number = NULL;
   int ch, sock, server_port = DEFAULT_SERVER_PORT;
   int debug_mode = 0;
   pthread_t signal_handler;
+  pthread_t request_creator;
+  pthread_t request_handlers[WORKER_NUM];
   sigset_t signal_set;
-
-  initialize_circular_buffer();
-  // operate_circular_buffer();
+  int i;
 
   while ((ch = getopt(argc, argv, "dp:")) != -1) {
     switch (ch) {
@@ -109,6 +50,7 @@ int main (int argc, char **argv) {
   }
 
   // シグナルマスクの作成
+  // 以後起動されるスレッドにはこのマスクが継承される
   sigemptyset(&signal_set);
   sigaddset(&signal_set, SIGINT);
   sigaddset(&signal_set, SIGTERM);
@@ -117,11 +59,21 @@ int main (int argc, char **argv) {
   // シグナルハンドラスレッドの起動
   pthread_create(&signal_handler, NULL, (void *)handle_signal, &signal_set);
 
-  /*
-   * 無限ループでsockをacceptし，acceptしたらそのクライアント用
-   * のスレッドを作成しプロトコル処理を続ける．
-   */
-  main_loop(sock);
+  // リクエストキューの初期化処理
+  initialize_circular_buffer();
+
+  // 接続を受け付けてスレッド作成のリクエストをキューに入れるスレッドの起動
+  pthread_create(&request_creator, NULL, (void *)create_request, (void *)sock);
+
+  // キューからリクエストを取り出し、応答処理を行うスレッドの起動
+  for (i = 0; i < WORKER_NUM; i++) {
+    pthread_create(&request_handlers[i], NULL, (void *)handle_request, NULL);
+  }
+
+  pthread_join(request_creator, NULL);
+  for (i = 0; i < WORKER_NUM; i++) {
+    pthread_join(request_handlers[i], NULL);
+  }
 }
 
 

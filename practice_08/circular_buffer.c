@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include "circular_buffer.h"
+#include "echo_reply.h"
 
 void put_cb_data(circ_buf_t *cbp, void *data) {
   pthread_mutex_lock(&cbp->buf_lock);
@@ -25,8 +26,9 @@ void put_cb_data(circ_buf_t *cbp, void *data) {
 
 void *get_cb_data(circ_buf_t *cbp) {
   void *data;
+
   pthread_mutex_lock(&cbp->buf_lock);
-  /* wait while there’s nothing in the buffer */
+  /* wait while there's nothing in the buffer */
   while (cbp->num_full == 0) {
     printf("WAITING FOR ENQUEUEING...\n");
     pthread_cond_wait(&cbp->notempty, &cbp->buf_lock);
