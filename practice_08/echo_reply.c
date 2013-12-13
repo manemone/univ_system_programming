@@ -68,6 +68,7 @@ int open_accepting_socket (int port) {
   return (sock);
 }
 
+// リクエスト処理(クライアントへの応答)関数
 void respond (int sock) {
   char c;
   FILE *fp;
@@ -78,11 +79,23 @@ void respond (int sock) {
   while ((c = getc(fp)) != EOF) {
     send(sock, &c, 1, 0);
     fprintf(stderr, "%c", c);
+    pthread_testcancel();
   }
+}
 
-  send(sock, "Bye!\n", 5, 0);
-  close(sock);
-  fprintf(stderr, "closed socket [%d].\n", sock);
+// リクエスト処理のクリーンアップ
+void cleanup_request (void *_req) {
+  REQUEST *req = (REQUEST *)_req;
+  char message[] = "Bye!\n";
+
+  if (req != NULL) {
+    send(req->sock, message, strlen(message), 0);
+    close(req->sock);
+    fprintf(stderr, "closed socket [%d].\n", req->sock);
+
+    free(req);
+    req = NULL;
+  }
 }
 
 // スレッド作成のリクエストオブジェクトを作成
@@ -99,12 +112,17 @@ REQUEST *create_thread_request (int sock, void (*func)(int)) {
 
 // リクエストを処理
 void handle_request (void *arg) {
-  REQUEST *req;
+  REQUEST *req = NULL;
   
+  printf("worker thread [%x] created.\n", (int)pthread_self());
   while (1) {
     req = (REQUEST *)get_cb_data(buffer);
+
+    printf("worker thread [%x] handling socket: [%d].\n", (int)pthread_self(), req->sock);
+    pthread_cleanup_push(cleanup_request, req);
     (req->func)(req->sock);
-    free(req);
+    pthread_cleanup_pop(1);
+    printf("worker thread [%x] closed socket.\n", (int)pthread_self());
   }
 }
 

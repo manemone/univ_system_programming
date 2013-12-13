@@ -71,10 +71,18 @@ int main (int argc, char **argv) {
     pthread_create(&request_handlers[i], NULL, (void *)handle_request, NULL);
   }
 
+  // 10 秒後にすべてのワーカスレッドをキャンセル
+  sleep(10);
   for (i = 0; i < WORKER_NUM; i++) {
-    pthread_join(request_handlers[i], &return_values[i]);
-    // NEVER REACHED
+    pthread_cancel(request_handlers[i]);
   }
+
+  for (i = 0; i < WORKER_NUM; i++) {
+    printf("joining worker thread %d...\n", i);
+    pthread_join(request_handlers[i], &return_values[i]);
+    printf("return_values[%d] = %d\n", i, (int)return_values[i]);
+  }
+  printf("PTHREAD_CANCELED = %d\n", (int)PTHREAD_CANCELED);
 }
 
 
