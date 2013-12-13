@@ -1,0 +1,261 @@
+システムプログラミング特論
+演習 8 レポート
+201220688 濱田一喜
+
+演習問題 [8-3]
+演習問題 [6] のサーバプログラムのスレッドプール化。
+
+プログラム
+概要
+プログラムは整理するため以下のファイルに分割されている。
+当該ファイルはこのレポートファイルと同時にアップロードされているため、そちらを参照されたい。
+各ファイルの役割を以下に示す。
+
+* main_8_3.c 
+  ソケットへの接続受付。
+  テストコードが含まれる。
+* circular_buffer.c/.h
+  巡回バッファを実現するコードが含まれる。
+* echo_reply.c/h
+  クライアントへの応答を実現するコードが含まれる。
+* logutil.c/.h
+  ログへの出力が含まれる。
+
+大まかな処理の流れを以下に示す。
+1. リクエストを受け付ける create_request 関数を実行するスレッドが、
+   ソケットからの接続を受け取ったのち、巡回バッファへリクエストをエンキューする。
+2. リクエストを処理する handle_request 関数を実行するワーカスレッドは、
+    巡回バッファからリクエストをデキューしたのち、リクエストに沿ってリクエスト処理関数をコールする。
+3. リクエスト処理関数が完了したら、ワーカスレッドは 2. に戻る。
+
+クライアントからのリクエスト処理を以上のように実装することで、同時に接続できるクライアントの上限数はワーカスレッドの数と一致する。
+ワーカスレッドはクライアントから受け取った文字をそのままクライアントに返し、同時に自分のコンソールに表示する。
+
+
+実行結果
+ひとつのコンソールでプログラムを実行し、その他の 5 つのコンソールからプログラムに telnet で接続を試みた。
+コンソール 0 でサーバプログラムを動かし、その他のコンソールを A-E を telnet クライアントとした。
+接続要求は コンソール E から昇順に行った。
+
+# 実行結果 1 -------------------------------------------------------
+# コンソール 0
+$ ./a.out -d -p 3000
+worker thread [b55cfb40] created.
+worker thread [b5dd0b40] created.
+worker thread [b65d1b40] created.
+opened socket [4].
+worker thread [b55cfb40] handling socket: [4].
+console A.
+opened socket [5].
+worker thread [b5dd0b40] handling socket: [5].
+console B.
+opened socket [6].
+worker thread [b65d1b40] handling socket: [6].
+console C.
+opened socket [7].
+opened socket [8].
+
+# コンソール A
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console A.
+console A.
+
+# コンソール B
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console B.
+console B.
+
+# コンソール C
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console C.
+console C.
+
+# コンソール D
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console D.
+
+# コンソール E
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console E.
+# ------------------------------------------------------------------
+
+
+コンソール A-C には、自分が打ったのと同じ文字列がサーバよりエコーバックされているのがわかる。
+一方、コンソール B、D には自分が打った文字列のみが表示され、サーバからの応答はない。
+コンソール 0 を見ると、ソケット 4-6 に対してワーカスレッドが応答を行っており、
+ソケット 7、8 はオープンされたもの応答が行われないままとなっていることがわかる。
+
+ここで、コンソール B に EOF を入力すると、コンソールの変化に変化が見られた。
+
+# 実行結果 2 -------------------------------------------------------
+# コンソール 0
+$ ./a.out -d -p 3000
+worker thread [b55cfb40] created.
+worker thread [b5dd0b40] created.
+worker thread [b65d1b40] created.
+opened socket [4].
+worker thread [b55cfb40] handling socket: [4].
+console A.
+opened socket [5].
+worker thread [b5dd0b40] handling socket: [5].
+console B.
+opened socket [6].
+worker thread [b65d1b40] handling socket: [6].
+console C.
+opened socket [7].
+opened socket [8].
+closed socket [5].
+worker thread [b5dd0b40] closed socket.
+worker thread [b5dd0b40] handling socket: [7].
+console D.
+
+# コンソール B
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+console B.
+console B.
+^]
+
+telnet> send EOF
+Bye!
+Connection closed by foreign host.
+$
+
+# コンソール D
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+console D.
+HELLO. what you type will be echo back to you.
+console D.
+
+# ------------------------------------------------------------------
+
+コンソール 0 の出力をみると、スレッド ID が b5dd0b40 のワーカスレッドがコンソール B のソケットをクローズし、
+これまで処理されていなかったソケット 7 に応答を始めたことがわかる。
+コンソール D で入力された文字はこのタイミングで受け付けられ、コンソール 0 とコンソール D に表示されている。
+一方、コンソール D より後に接続要求を出したコンソール E には応答がなされず、表示は実行結果 1 の状態のまま変化がなかった。
+
+以上の結果から、巡回バッファを利用してクライアントからのリクエストを保持し、
+スレッドプールによるワーカ数固定の並列処理を行うサーバプログラムを実装できたことが確かめられた。
+
+
+
+
+演習問題 [8-4]
+演習問題 [8-3] のサーバプログラムのワーカスレッドの deprecation cancel safe 化。
+
+
+プログラム
+概要
+プログラムは整理するため以下のファイルに分割されている。
+当該ファイルはこのレポートファイルと同時にアップロードされているため、そちらを参照されたい。
+各ファイルの役割を以下に示す。
+
+* main_8_4.c 
+  ソケットへの接続受付。
+  テストコードが含まれる。
+* circular_buffer.c/.h
+  巡回バッファを実現するコードが含まれる。
+  cleanup_cdb_lock() 関数でスレッドがキャンセルされた場合のクリーンアップを行う。
+* echo_reply.c/h
+  クライアントへの応答を実現するコードが含まれる。
+  cleanup_request() 関数でハンドラがキャンセルされた場合のクリーンアップを行う。
+
+* logutil.c/.h
+  ログへの出力が含まれる。
+
+サーバの動作は課題 8-3 と同様だが、main_8_4.c の末尾に、起動 10 秒後にすべての
+ワーカスレッドをキャンセルした後 join し、スレッドの返り値を表示するコードが挿入されている。
+
+クライアントからのリクエスト処理を以上のように実装することで、同時に接続できるクライアントの上限数はワーカスレッドの数と一致する。
+ワーカスレッドはクライアントから受け取った文字をそのままクライアントに返し、同時に自分のコンソールに表示する。
+
+
+実行結果
+ひとつのコンソールでプログラムを実行し、その他の 2 つのコンソールからプログラムに telnet で接続を試みた。
+コンソール 0 でサーバプログラムを動かし、その他のコンソールを A、B を telnet クライアントとした。
+
+# 実行結果 3 -------------------------------------------------------
+# コンソール 0
+$ ./a.out -d -p 3000
+worker thread [b55e8b40] created.
+worker thread [b5de9b40] created.
+worker thread [b65eab40] created.
+opened socket [4].
+worker thread [b55e8b40] handling socket: [4].
+opened socket [5].
+worker thread [b5de9b40] handling socket: [5].
+closed socket [5].
+joining worker thread 0...
+return_values[0] = -1
+joining worker thread 1...
+return_values[1] = -1
+joining worker thread 2...
+closed socket [4].
+return_values[2] = -1
+PTHREAD_CANCELED = -1
+$
+
+# コンソール A
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+Bye!
+Connection closed by foreign host.
+$
+
+# コンソール B
+$ telnet localhost 3000
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+HELLO. what you type will be echo back to you.
+Bye!
+Connection closed by foreign host.
+$
+# ------------------------------------------------------------------
+
+コンソール A、B から接続を受け付けた後、スレッドがキャンセルされている。
+返り値はPTHREAD_CANCELED の値と一致しており、正しくスレッドがキャンセルされている。
+コンソール A、B には終了時の Bye! という文字列が表示されていることから、
+クリーンアップハンドラも正しく実行されたことがわかる。
+
+
+考察
+プログラムが大きくなったため、分割するのに骨が折れた。
+巡回バッファ内でスレッドがキャンセルされる場合について考慮していなかったため、
+うまくキャンセルを行うことができなず、この原因を発見するのに時間がかかった。
+
+
+講義の感想
+スレッドについて学ぶのはとても興味深かった。
+この講義を受けなければ触れることがなかった技術であると感じる。
+講義の実習は pthread を用いて行われたが、モニタ等の普遍的な概念を学べて非常に有意義であった。
+
